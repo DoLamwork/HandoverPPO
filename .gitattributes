@@ -1,0 +1,4 @@
+* text=auto
+*.csv -diff
+*.pt binary
+*.pth binary

@@ -1,0 +1,122 @@
+# HandoverPPO
+
+Trace-driven research framework for comparing an audited A3 handover reference
+with a new event-triggered SMDP/PPO approach.
+
+The PPO implementation from the original paper has been removed. It selected
+an action every 10 ms and does not match the new decision model. The replacement
+will be built incrementally on top of a shared primitive protocol engine.
+
+## Current status
+
+Available:
+
+- CSV RSRP/SINR traces and deterministic preprocessing.
+- Audited A3, TTT, RLM, RLF, handover, and ping-pong reference simulator.
+- Action-controlled primitive `HandoverEngine` with A3 decision points.
+- Causal 19-feature A3 observation builder.
+- Primitive throughput/RLF/ping-pong reward with auditable breakdown.
+- Decision-to-decision macro-transition builder with duration-aware discount.
+- Gymnasium SMDP environment with seeded trajectory sampling.
+- PyTorch PPO with duration-aware GAE, validation, and checkpointing.
+- `AlwaysHandoverPolicy` and `AlwaysStayPolicy` for environment verification.
+
+Not implemented yet:
+
+- Hyperparameter tuning and final trained-model selection.
+
+## Primitive engine
+
+```python
+from ho_optim_drl import Config
+from ho_optim_drl.data import load_radio_trace
+from ho_optim_drl.protocol import HandoverEngine
+
+config = Config()
+trace = load_radio_trace(
+    config,
+    data_dir="data/processed",
+    rsrp_file="rsrp_30kmh_0.csv",
+    sinr_file="sinr_30kmh_0.csv",
+)
+engine = HandoverEngine(config)
+snapshot = engine.reset(trace)
+
+while True:
+    if engine.decision_point is not None:
+        engine.start_handover()  # or engine.stay()
+
+    tick = engine.advance_one_tick()
+    if tick.terminated:
+        break
+```
+
+`advance_one_tick()` refuses to continue while a decision is pending. A
+rejected A3 event is suppressed until A3 leaving or a different target appears.
+
+Observation details and normalization are documented in
+[docs/observation.md](docs/observation.md).
+
+Reward and macro-transition semantics are documented in
+[docs/reward.md](docs/reward.md).
+
+Gymnasium usage and the `info` contract are documented in
+[docs/gymnasium.md](docs/gymnasium.md).
+
+PPO equations, defaults, and commands are documented in
+[docs/ppo.md](docs/ppo.md).
+
+See [docs/architecture.md](docs/architecture.md) for the build order and
+[docs/3gpp_baseline_audit.md](docs/3gpp_baseline_audit.md) for standards
+coverage and simulation assumptions.
+
+## Installation
+
+```bash
+python -m pip install -e .
+```
+
+The implementation uses NumPy, SciPy, Gymnasium, and PyTorch. PPO is local to
+this repository so its duration-aware GAE semantics remain explicit.
+
+## Data
+
+Runtime input is stored in `data/processed` as:
+
+```text
+sample,time_ms,bs_0,bs_1,bs_2,bs_3,bs_4
+```
+
+The processed CSV traces are versioned with the repository so a fresh clone
+can train immediately. MATLAB source traces are intentionally excluded from
+Git. If they are available locally, regenerate the CSV files with:
+
+```bash
+python scripts/convert_mat_to_csv.py \
+  --input-dir path/to/mat/traces \
+  --output-dir data/processed \
+  --overwrite
+```
+
+## Validate the reference
+
+```bash
+python run.py validate_3gpp
+```
+
+## Test
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+## Origin
+
+The repository originated from the code accompanying:
+
+> J. Voigt, P. J. Gu, and P. M. Rost, "A Deep Reinforcement Learning-Based
+> Approach for Adaptive Handover Protocols," SCC 2025,
+> doi:10.1109/IEEECONF62907.2025.10949111.
+
+The current architecture deliberately does not preserve the paper's PPO
+implementation or reported behavior.
