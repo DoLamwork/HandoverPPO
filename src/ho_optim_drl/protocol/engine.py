@@ -69,6 +69,11 @@ class HandoverEngine(A3ReferenceSimulator):
         return self._decision_point
 
     @property
+    def trace(self) -> RadioTrace | None:
+        """Return the immutable trace currently owned by the engine."""
+        return self._trace
+
+    @property
     def snapshot(self) -> ProtocolSnapshot:
         """Return a causal copy of the current protocol state."""
         self._require_trace()

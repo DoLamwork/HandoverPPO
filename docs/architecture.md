@@ -10,6 +10,8 @@ src/ho_optim_drl/
 |   |-- loader.py
 |   |-- split.py
 |   `-- trace.py
+|-- evaluation/
+|   `-- benchmark.py
 |-- protocol/
 |   |-- primitives.py
 |   |-- reference.py
@@ -37,6 +39,7 @@ src/ho_optim_drl/
 - `protocol`: radio timers, A3, handover, RLF, and the audited reference.
 - `smdp`: action, observation, reward, and macro-transition contracts.
 - `agents`: policies that consume observations. Protocol logic does not belong here.
+- `evaluation`: matched-trajectory policy benchmarking and aggregation.
 
 ## Engine invariants
 
@@ -60,7 +63,9 @@ src/ho_optim_drl/
 6. [Done] Implement and verify the Gymnasium macro-step environment.
 7. [Done] Add duration-aware GAE and rollout storage.
 8. [Done] Add clipped SMDP PPO, evaluation, and checkpointing.
-9. Tune reward and PPO hyperparameters on validation trajectories.
+9. [Done] Add matched PPO/3GPP/Stay benchmark tables.
+10. Tune reward and PPO hyperparameters on validation trajectories.
+11. Repeat training across seeds and report confidence intervals.
 
 The removed PPO implementation acted every 10 ms and is deliberately not used
 as the foundation of this architecture.

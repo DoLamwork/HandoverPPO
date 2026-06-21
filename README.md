@@ -66,6 +66,9 @@ Gymnasium usage and the `info` contract are documented in
 PPO equations, defaults, and commands are documented in
 [docs/ppo.md](docs/ppo.md).
 
+Matched policy benchmarking and metric aggregation are documented in
+[docs/benchmark.md](docs/benchmark.md).
+
 See [docs/architecture.md](docs/architecture.md) for the build order and
 [docs/3gpp_baseline_audit.md](docs/3gpp_baseline_audit.md) for standards
 coverage and simulation assumptions.
@@ -103,6 +106,19 @@ python scripts/convert_mat_to_csv.py \
 ```bash
 python run.py validate_3gpp
 ```
+
+## Benchmark policies
+
+After training or downloading a checkpoint:
+
+```bash
+python run.py benchmark \
+  --checkpoint results/models/smdp_ppo/smdp_ppo_final.pt \
+  --split test
+```
+
+This compares PPO with 3GPP Always-HO and Always-Stay on the same held-out
+trajectories and writes CSV/JSON tables to `results/benchmark`.
 
 ## Test
 

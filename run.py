@@ -68,6 +68,30 @@ def run() -> int:
     )
     evaluate_parser.add_argument("--split-seed", type=int, default=17)
     evaluate_parser.add_argument("--device", default="cpu")
+    benchmark_parser = subparsers.add_parser(
+        "benchmark",
+        help="Compare PPO, 3GPP Always-HO, and Always-Stay.",
+    )
+    benchmark_parser.add_argument(
+        "--checkpoint",
+        default=os.path.join(
+            "results",
+            "models",
+            "smdp_ppo",
+            "smdp_ppo_final.pt",
+        ),
+    )
+    benchmark_parser.add_argument(
+        "--split",
+        choices=("validation", "test"),
+        default="test",
+    )
+    benchmark_parser.add_argument("--split-seed", type=int, default=17)
+    benchmark_parser.add_argument("--device", default="cpu")
+    benchmark_parser.add_argument(
+        "--output-dir",
+        default=os.path.join("results", "benchmark"),
+    )
 
     args = parser.parse_args()
     if args.command == "validate_3gpp":
@@ -82,6 +106,10 @@ def run() -> int:
         from scripts import evaluate_smdp_ppo
 
         return evaluate_smdp_ppo.main(THIS_PATH, args)
+    if args.command == "benchmark":
+        from scripts import benchmark_policies
+
+        return benchmark_policies.main(THIS_PATH, args)
 
     parser.print_help()
     return 0
