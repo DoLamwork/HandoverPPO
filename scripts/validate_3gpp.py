@@ -10,20 +10,24 @@ from ho_optim_drl.protocol import A3ReferenceSimulator
 import ho_optim_drl.utils as ut
 
 
-def main(root_path: str) -> int:
+def main(root_path: str, args) -> int:
     """Main function."""
 
     config = Config()
-    # Load CSV traces
-    data_dir = os.path.join(root_path, "data", "processed")
+    data_dir = args.data_dir
+    if not os.path.isabs(data_dir):
+        data_dir = os.path.join(root_path, data_dir)
 
-    # Speed filter
-    use_speed_list = [30, 50, 70, 90]
-    trace_pairs = [
-        pair
-        for pair in discover_trace_pairs(data_dir)
-        if pair.speed_kmh in use_speed_list
-    ]
+    trace_pairs = discover_trace_pairs(data_dir)
+    if args.speeds is not None:
+        allowed_speeds = set(args.speeds)
+        trace_pairs = [
+            pair for pair in trace_pairs if pair.speed_kmh in allowed_speeds
+        ]
+    if not trace_pairs:
+        raise ValueError(
+            f"No complete trace pairs found in {data_dir!r} for the requested speeds."
+        )
     speeds = [pair.speed_kmh for pair in trace_pairs]
 
     # Result containers

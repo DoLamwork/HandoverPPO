@@ -12,13 +12,30 @@ def run() -> int:
         description="Trace-driven adaptive handover research framework."
     )
     subparsers = parser.add_subparsers(dest="command")
-    subparsers.add_parser(
+    validate_parser = subparsers.add_parser(
         "validate_3gpp",
         help="Run the audited A3-based reference on all CSV traces.",
+    )
+    validate_parser.add_argument(
+        "--data-dir",
+        default=os.path.join("data", "processed"),
+        help="Directory containing normalized RSRP/SINR CSV trace pairs.",
+    )
+    validate_parser.add_argument(
+        "--speeds",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Optional speed(s) in km/h to validate; defaults to every discovered speed.",
     )
     train_parser = subparsers.add_parser(
         "train_ppo",
         help="Train duration-aware PPO on the SMDP environment.",
+    )
+    train_parser.add_argument(
+        "--data-dir",
+        default=os.path.join("data", "processed"),
+        help="Directory containing normalized RSRP/SINR CSV trace pairs.",
     )
     train_parser.add_argument("--total-macro-steps", type=int, default=100_000)
     train_parser.add_argument("--rollout-steps", type=int, default=512)
@@ -73,6 +90,11 @@ def run() -> int:
         help="Compare PPO, 3GPP Always-HO, and Always-Stay.",
     )
     benchmark_parser.add_argument(
+        "--data-dir",
+        default=os.path.join("data", "processed"),
+        help="Directory containing normalized RSRP/SINR CSV trace pairs.",
+    )
+    benchmark_parser.add_argument(
         "--checkpoint",
         default=os.path.join(
             "results",
@@ -97,7 +119,7 @@ def run() -> int:
     if args.command == "validate_3gpp":
         from scripts import validate_3gpp
 
-        return validate_3gpp.main(THIS_PATH)
+        return validate_3gpp.main(THIS_PATH, args)
     if args.command == "train_ppo":
         from scripts import train_smdp_ppo
 

@@ -73,6 +73,16 @@ entropy coefficient  0.01
 python run.py train_ppo --total-macro-steps 100000
 ```
 
+To train on normalized UAV traces instead of the default `data/processed`
+dataset, select their directory explicitly:
+
+```bash
+python run.py train_ppo \
+  --data-dir data/uav_processed \
+  --total-macro-steps 100000 \
+  --output-dir results/models/uav_smdp_ppo
+```
+
 The command creates the deterministic trajectory split with seed 17, trains on
 87 trajectories, selects the best checkpoint on 20 validation trajectories,
 and reports final metrics on 17 held-out test trajectories.

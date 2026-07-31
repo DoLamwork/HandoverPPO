@@ -9,8 +9,20 @@ The benchmark command evaluates three policies on the same trajectory split:
 ```bash
 python run.py benchmark \
   --checkpoint results/models/smdp_ppo/smdp_ppo_final.pt \
+  --data-dir data/processed \
   --split test \
   --split-seed 17
+```
+
+For a model trained on normalized UAV traces, use that dataset and a separate
+output directory:
+
+```bash
+python run.py benchmark \
+  --checkpoint results/models/smdp_ppo/smdp_ppo_final.pt \
+  --data-dir data/uav_processed \
+  --split test \
+  --output-dir results/benchmark/uav_smdp_ppo
 ```
 
 All policies use the same `HandoverSMDPEnv`, preprocessing, protocol timers,

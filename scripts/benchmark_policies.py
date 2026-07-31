@@ -21,7 +21,9 @@ from ho_optim_drl.smdp import HandoverAction
 
 def main(root_path: str, args: Namespace) -> int:
     """Run the complete benchmark and write CSV/JSON outputs."""
-    data_dir = os.path.join(root_path, "data", "processed")
+    data_dir = args.data_dir
+    if not os.path.isabs(data_dir):
+        data_dir = os.path.join(root_path, data_dir)
     pairs = discover_trace_pairs(data_dir)
     splits = stratified_trajectory_split(pairs, seed=args.split_seed)
     selected_pairs = (
@@ -100,6 +102,7 @@ def main(root_path: str, args: Namespace) -> int:
         metadata={
             "checkpoint": checkpoint_path,
             "checkpoint_extra": checkpoint_extra,
+            "data_dir": data_dir,
             "split": args.split,
             "split_seed": args.split_seed,
             "trajectories": len(selected_pairs),

@@ -114,7 +114,9 @@ class TrainingProgressLogger:
 
 def main(root_path: str, args: Namespace) -> int:
     """Train PPO, save checkpoints, and report validation/test metrics."""
-    data_dir = os.path.join(root_path, "data", "processed")
+    data_dir = args.data_dir
+    if not os.path.isabs(data_dir):
+        data_dir = os.path.join(root_path, data_dir)
     pairs = discover_trace_pairs(data_dir)
     splits = stratified_trajectory_split(pairs, seed=args.split_seed)
     protocol_config = Config()
@@ -177,6 +179,7 @@ def main(root_path: str, args: Namespace) -> int:
         f"validation={len(splits.validation)}, test={len(splits.test)}",
         flush=True,
     )
+    print(f"Data directory: {data_dir}", flush=True)
     print(f"Live metrics: {metrics_path}", flush=True)
     history = agent.train(
         train_env,
@@ -213,6 +216,7 @@ def main(root_path: str, args: Namespace) -> int:
     )
 
     report = {
+        "data_dir": data_dir,
         "ppo_config": asdict(ppo_config),
         "split_seed": args.split_seed,
         "split_sizes": {

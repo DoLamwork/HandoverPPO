@@ -107,6 +107,26 @@ python scripts/convert_mat_to_csv.py \
 python run.py validate_3gpp
 ```
 
+To use the UAV simulator traces, normalize them into a separate directory
+(the source files are left unchanged), then validate every UAV speed:
+
+```bash
+python scripts/convert_uav_csv.py \
+  --input-dir data/UAV_sim \
+  --output-dir data/uav_processed
+python run.py validate_3gpp \
+  --data-dir data/uav_processed \
+  --speeds 30 50 70 90
+```
+
+Train PPO on the normalized UAV traces with a separate checkpoint directory:
+
+```bash
+python run.py train_ppo \
+  --data-dir data/uav_processed \
+  --output-dir results/models/uav_smdp_ppo
+```
+
 ## Benchmark policies
 
 After training or downloading a checkpoint:
@@ -119,6 +139,10 @@ python run.py benchmark \
 
 This compares PPO with 3GPP Always-HO and Always-Stay on the same held-out
 trajectories and writes CSV/JSON tables to `results/benchmark`.
+
+For a PPO model trained on normalized UAV traces, add
+`--data-dir data/uav_processed` and choose a separate output directory, for
+example `--output-dir results/benchmark/uav_smdp_ppo`.
 
 ## Test
 
