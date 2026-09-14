@@ -9,7 +9,7 @@ from ho_optim_drl.smdp import HandoverAction, RewardBreakdown
 
 
 class PolicyTests(unittest.TestCase):
-    def test_diagnostic_policies_use_binary_smdp_actions(self) -> None:
+    def test_diagnostic_policies_use_named_smdp_actions(self) -> None:
         observation = np.zeros(1, dtype=np.float32)
 
         self.assertEqual(
@@ -20,6 +20,7 @@ class PolicyTests(unittest.TestCase):
             AlwaysStayPolicy().predict(observation),
             HandoverAction.STAY,
         )
+        self.assertEqual(HandoverAction.WAIT_50.value, 2)
 
     def test_reward_breakdown_has_one_total(self) -> None:
         reward = RewardBreakdown(rate=-0.1, rlf=-2.0, ping_pong=-0.25)

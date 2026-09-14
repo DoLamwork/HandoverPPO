@@ -212,6 +212,8 @@ class MacroTransitionBuilder:
     def _apply_action(self, action: HandoverAction) -> None:
         if action is HandoverAction.HANDOVER:
             self.engine.start_handover()
+        elif action is HandoverAction.WAIT_50:
+            self.engine.wait_50()
         elif action is HandoverAction.STAY:
             self.engine.stay()
         else:

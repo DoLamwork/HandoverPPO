@@ -28,6 +28,8 @@ def run_policy(
             action = policy.predict(observation)
             if action == HandoverAction.HANDOVER:
                 engine.start_handover()
+            elif action == HandoverAction.WAIT_50:
+                engine.wait_50()
             elif action == HandoverAction.STAY:
                 engine.stay()
             else:

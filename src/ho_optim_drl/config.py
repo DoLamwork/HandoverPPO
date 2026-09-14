@@ -3,6 +3,13 @@
 from dataclasses import dataclass
 
 
+# Shared radio defaults.  The UAV generator imports these values so generated
+# traces and the handover environment start from one project-wide definition.
+DEFAULT_CARRIER_HZ = 2.1e9
+DEFAULT_BANDWIDTH_HZ = 10e6
+DEFAULT_DELTA_T_MS = 10
+
+
 @dataclass
 class Config:
     """
@@ -10,7 +17,7 @@ class Config:
     """
 
     # Data parameters
-    delta_t_ms: int = 10  # Time step in ms (delta t)
+    delta_t_ms: int = DEFAULT_DELTA_T_MS  # Time step in ms (delta t)
 
     clip_sinr: bool = True  # Clip SINR values
     sinr_upper_clip: float = 10.0  # Upper clipping value for SINR in dB
@@ -20,8 +27,8 @@ class Config:
     l3_filter_w: float = 1 / (2 ** (l3_k / 4))  # L3 filter weight
 
     # Network
-    fc: float = 2.1e9  # Carrier frequency in Hz
-    bw: float = 10e6  # bandwidth in Hz
+    fc: float = DEFAULT_CARRIER_HZ  # Carrier frequency in Hz
+    bw: float = DEFAULT_BANDWIDTH_HZ  # bandwidth in Hz
 
     # Handover environment parameters
     # SINR proxies for the lower-layer Qin/Qout indications. 3GPP defines

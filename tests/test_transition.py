@@ -31,6 +31,33 @@ def _build_runner(
 
 
 class MacroTransitionTests(unittest.TestCase):
+    def test_wait_50_creates_a_five_tick_macro_transition(self) -> None:
+        config = Config()
+        rsrp = np.vstack(
+            (
+                np.full(14, -80.0),
+                np.full(14, -77.0),
+            )
+        )
+        sinr = np.vstack((np.full(14, 10.0), np.full(14, 0.0)))
+        runner = _build_runner(config, gamma_per_second=0.95)
+
+        runner.reset(RadioTrace.from_arrays(rsrp, sinr))
+        transition = runner.step(HandoverAction.WAIT_50)
+
+        expected_rate_mbps = config.bw * np.log2(1 + 10.0) / 1e6
+        expected_rate_reward = (
+            5 * config.delta_t_ms / 1000 * expected_rate_mbps / 100.0
+        )
+        self.assertEqual(transition.action, HandoverAction.WAIT_50)
+        self.assertEqual(transition.duration_ticks, 5)
+        self.assertAlmostEqual(transition.duration_seconds, 0.05)
+        self.assertAlmostEqual(transition.discount, 0.95**0.05)
+        self.assertAlmostEqual(transition.reward.rate, expected_rate_reward)
+        self.assertFalse(transition.terminated)
+        self.assertIsNotNone(transition.next_observation)
+        self.assertEqual(runner.engine.decision_point.tic, 9)
+
     def test_stay_advances_exactly_to_next_rearmed_a3_decision(self) -> None:
         config = Config()
         rsrp = np.vstack(

@@ -101,7 +101,7 @@ class _RadioRecord:
 
 
 class A3ObservationBuilder(ObservationBuilder):
-    """Build the normalized 19-feature observation for STAY/HO decisions."""
+    """Build the normalized 19-feature observation for SMDP decisions."""
 
     FEATURE_NAMES = (
         "serving_spectral_efficiency",

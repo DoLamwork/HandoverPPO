@@ -6,7 +6,7 @@ import numpy as np
 
 from ho_optim_drl import Config
 from ho_optim_drl.agents import AlwaysHandoverPolicy, run_policy
-from ho_optim_drl.data import RadioTrace, loader
+from ho_optim_drl.data import RadioTrace
 from ho_optim_drl.protocol import (
     A3ReferenceSimulator,
     HandoverEngine,
@@ -98,6 +98,67 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(first_decision_tic, 4)
         self.assertEqual(engine.decision_point.tic, 13)
 
+    def test_wait_50_reoffers_the_same_valid_a3_event_after_five_ticks(
+        self,
+    ) -> None:
+        rsrp = np.vstack(
+            (
+                np.full(14, -80.0),
+                np.full(14, -77.0),
+            )
+        )
+        engine = HandoverEngine(Config())
+        engine.reset(_trace(rsrp, _constant_sinr(2, 14)))
+
+        for _ in range(5):
+            engine.advance_one_tick()
+        first_decision = engine.decision_point
+        engine.wait_50()
+
+        results = [engine.advance_one_tick() for _ in range(5)]
+
+        self.assertTrue(
+            all(
+                result.snapshot.phase is not ProtocolPhase.DECISION
+                for result in results[:-1]
+            )
+        )
+        self.assertEqual(results[-1].snapshot.phase, ProtocolPhase.DECISION)
+        self.assertEqual(first_decision.tic, 4)
+        self.assertEqual(engine.decision_point.tic, 9)
+        self.assertEqual(
+            engine.decision_point.a3_start_tic,
+            first_decision.a3_start_tic,
+        )
+        self.assertEqual(
+            engine.decision_point.target_cell,
+            first_decision.target_cell,
+        )
+        self.assertEqual(engine.successful_ho_history, [])
+
+    def test_wait_50_is_cancelled_when_a3_leaves_before_timeout(self) -> None:
+        rsrp = np.vstack(
+            (
+                np.full(16, -80.0),
+                np.array([-77.0] * 8 + [-81.0] + [-77.0] * 7),
+            )
+        )
+        engine = HandoverEngine(Config())
+        engine.reset(_trace(rsrp, _constant_sinr(2, 16)))
+
+        for _ in range(5):
+            engine.advance_one_tick()
+        engine.wait_50()
+
+        for _ in range(8):
+            tick = engine.advance_one_tick()
+            self.assertNotEqual(tick.snapshot.phase, ProtocolPhase.DECISION)
+        tick = engine.advance_one_tick()
+
+        self.assertEqual(tick.snapshot.phase, ProtocolPhase.DECISION)
+        self.assertEqual(engine.decision_point.tic, 13)
+        self.assertEqual(engine.decision_point.a3_start_tic, 9)
+
 
 class HandoverTests(unittest.TestCase):
     def test_handover_uses_latched_target_when_strongest_cell_changes(self) -> None:
@@ -160,11 +221,19 @@ class HandoverTests(unittest.TestCase):
 class ReferenceParityTests(unittest.TestCase):
     def test_always_handover_matches_reference_tick_for_tick(self) -> None:
         config = Config()
-        trace = loader.load_radio_trace(
-            config,
-            "data/processed",
-            "rsrp_30kmh_0.csv",
-            "sinr_30kmh_0.csv",
+        trace = _trace(
+            np.vstack(
+                (
+                    np.array([-80.0] * 10 + [-75.0] * 10),
+                    np.array([-77.0] * 10 + [-80.0] * 10),
+                )
+            ),
+            np.vstack(
+                (
+                    np.array([5.0] * 10 + [8.0] * 10),
+                    np.array([2.0] * 10 + [0.0] * 10),
+                )
+            ),
         )
 
         reference = A3ReferenceSimulator(config)

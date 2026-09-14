@@ -45,6 +45,8 @@ class SMDPRolloutBuffer:
         self.duration_seconds = np.empty(capacity, dtype=np.float32)
         self.terminated = np.empty(capacity, dtype=np.bool_)
         self.truncated = np.empty(capacity, dtype=np.bool_)
+        self.trace_ids = np.empty(capacity, dtype=object)
+        self.trace_ids.fill(None)
         self.advantages = np.empty(capacity, dtype=np.float32)
         self.returns = np.empty(capacity, dtype=np.float32)
         self.size = 0
@@ -67,6 +69,7 @@ class SMDPRolloutBuffer:
         duration_seconds: float,
         terminated: bool,
         truncated: bool,
+        trace_id: str | None = None,
     ) -> None:
         """Store one macro-transition."""
         if self.full:
@@ -95,6 +98,8 @@ class SMDPRolloutBuffer:
             raise ValueError("discount must be in (0, 1].")
         if duration_seconds <= 0:
             raise ValueError("duration_seconds must be positive.")
+        if trace_id is not None and not trace_id:
+            raise ValueError("trace_id must be non-empty when provided.")
 
         index = self.size
         self.observations[index] = observation
@@ -107,6 +112,7 @@ class SMDPRolloutBuffer:
         self.duration_seconds[index] = duration_seconds
         self.terminated[index] = terminated
         self.truncated[index] = truncated
+        self.trace_ids[index] = trace_id
         self.size += 1
         self._advantages_ready = False
 

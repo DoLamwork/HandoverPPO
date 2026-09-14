@@ -188,3 +188,17 @@ checkpoints/
 *.pem
 *.key
 credentials
+
+# Integrated UAV data generator artifacts
+/data/uav_generated/
+/data/UAV_single_runs/
+/data/UAV_data_100m/
+/data/UAV_data_300m/
+/data/UAV_data_100m_grid100m/
+/data/uav_100m_grid100m_dev_processed/
+/data_generator/outputs/
+/data_generator/.venv/
+
+# Local report/render scratch directories
+/.tmp/
+/tmp/

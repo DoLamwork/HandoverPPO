@@ -1,162 +1,134 @@
-# HandoverPPO
+# HandoverOptimDRL
 
-Trace-driven research framework for comparing an audited A3 handover reference
-with a new event-triggered SMDP/PPO approach.
+Project chính để train và validate PPO/SMDP cho tối ưu handover, so sánh với
+baseline 3GPP A3. **UAV simulation là thành phần tạo dữ liệu**, đặt trong
+`data_generator/` của project này.
 
-The PPO implementation from the original paper has been removed. It selected
-an action every 10 ms and does not match the new decision model. The replacement
-will be built incrementally on top of a shared primitive protocol engine.
+`data_generator/` chỉ sinh RSRP/SINR của mọi cell theo thời gian. Nó không chọn
+serving cell và không xử lý kết nối, A3/TTT, handover hay RLF; các cơ chế đó chỉ
+nằm trong `src/ho_optim_drl/`.
 
-## Current status
-
-Available:
-
-- CSV RSRP/SINR traces and deterministic preprocessing.
-- Audited A3, TTT, RLM, RLF, handover, and ping-pong reference simulator.
-- Action-controlled primitive `HandoverEngine` with A3 decision points.
-- Causal 19-feature A3 observation builder.
-- Primitive throughput/RLF/ping-pong reward with auditable breakdown.
-- Decision-to-decision macro-transition builder with duration-aware discount.
-- Gymnasium SMDP environment with seeded trajectory sampling.
-- PyTorch PPO with duration-aware GAE, validation, and checkpointing.
-- `AlwaysHandoverPolicy` and `AlwaysStayPolicy` for environment verification.
-
-Not implemented yet:
-
-- Hyperparameter tuning and final trained-model selection.
-
-## Primitive engine
-
-```python
-from ho_optim_drl import Config
-from ho_optim_drl.data import load_radio_trace
-from ho_optim_drl.protocol import HandoverEngine
-
-config = Config()
-trace = load_radio_trace(
-    config,
-    data_dir="data/processed",
-    rsrp_file="rsrp_30kmh_0.csv",
-    sinr_file="sinr_30kmh_0.csv",
-)
-engine = HandoverEngine(config)
-snapshot = engine.reset(trace)
-
-while True:
-    if engine.decision_point is not None:
-        engine.start_handover()  # or engine.stay()
-
-    tick = engine.advance_one_tick()
-    if tick.terminated:
-        break
-```
-
-`advance_one_tick()` refuses to continue while a decision is pending. A
-rejected A3 event is suppressed until A3 leaving or a different target appears.
-
-Observation details and normalization are documented in
-[docs/observation.md](docs/observation.md).
-
-Reward and macro-transition semantics are documented in
-[docs/reward.md](docs/reward.md).
-
-Gymnasium usage and the `info` contract are documented in
-[docs/gymnasium.md](docs/gymnasium.md).
-
-PPO equations, defaults, and commands are documented in
-[docs/ppo.md](docs/ppo.md).
-
-Matched policy benchmarking and metric aggregation are documented in
-[docs/benchmark.md](docs/benchmark.md).
-
-See [docs/architecture.md](docs/architecture.md) for the build order and
-[docs/3gpp_baseline_audit.md](docs/3gpp_baseline_audit.md) for standards
-coverage and simulation assumptions.
-
-## Installation
-
-```bash
-python -m pip install -e .
-```
-
-The implementation uses NumPy, SciPy, Gymnasium, and PyTorch. PPO is local to
-this repository so its duration-aware GAE semantics remain explicit.
-
-## Data
-
-Runtime input is stored in `data/processed` as:
+## Cấu trúc
 
 ```text
-sample,time_ms,bs_0,bs_1,bs_2,bs_3,bs_4
+HandoverOptimDRL/
+|-- run.py                           # Lệnh chạy chính
+|-- setup.py / pyproject.toml
+|-- src/ho_optim_drl/                 # Protocol, environment, PPO, evaluation
+|-- scripts/                         # Tương thích các công cụ cũ
+|-- data_generator/
+|   |-- main.py                      # Mở simulator
+|   |-- src/uav_simulation/          # Mobility, anten, radio, CSV, batch, biểu đồ
+|   |-- tests/
+|   `-- docs/
+|-- data/                            # Dữ liệu dùng chung
+|   |-- UAV_data_100m/               # CSV thô UAV hiện có
+|   |-- UAV_data_300m/
+|   |-- UAV_data_100m_grid100m/
+|   `-- uav_generated/               # CSV chuẩn hóa và metadata cho luồng mới
+|-- results/
+|   |-- models/                      # Checkpoint PPO
+|   |-- benchmark/                   # So sánh PPO / 3GPP Always-HO
+|   `-- 3gpp/                        # Kết quả A3 reference
+|-- tests/                           # Test handover và tích hợp
+`-- docs/
 ```
 
-The processed CSV traces are versioned with the repository so a fresh clone
-can train immediately. MATLAB source traces are intentionally excluded from
-Git. If they are available locally, regenerate the CSV files with:
+Không có bản sao PPO bên trong `data_generator/`. Một lần cài đặt tại thư mục
+HandoverOptimDRL cài cả package chính và thành phần tạo dữ liệu.
 
-```bash
-python scripts/convert_mat_to_csv.py \
-  --input-dir path/to/mat/traces \
-  --output-dir data/processed \
-  --overwrite
+## Cài đặt
+
+Python 3.12 trở lên. Tất cả lệnh sau chạy từ `C:\Project\HandoverOptimDRL`:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe run.py --help
 ```
 
-## Validate the reference
+Nếu `.venv` đã hoạt động, dùng lại môi trường đó. `handover-ppo` tương đương
+`python run.py` sau khi kích hoạt môi trường. `uav-sim` chỉ cung cấp công cụ
+simulator. Trên macOS/Linux dùng `.venv/bin/python`.
 
-```bash
-python run.py validate_3gpp
+## Tạo dữ liệu dùng trực tiếp để train
+
+Dữ liệu thô có sẵn nằm trong `data/UAV_data_100m`, `data/UAV_data_300m` và
+`data/UAV_data_100m_grid100m`. Bộ 360 quỹ đạo đã chuẩn hóa từ bước tích hợp trước
+được đặt tại `data/uav_generated`; nếu thư mục này đã có dữ liệu, có thể train ngay.
+
+Để tạo một thí nghiệm mới:
+
+```powershell
+.\.venv\Scripts\python.exe run.py generate_data --speeds 30 50 70 90 --routes-per-speed 60 --grid-spacing 100 --workers 4 --output-dir data/uav_new
+.\.venv\Scripts\python.exe run.py train_ppo --data-dir data/uav_new --speeds 30 50 70 90 --output-dir results/models/uav_new_ppo
 ```
 
-To use the UAV simulator traces, normalize them into a separate directory
-(the source files are left unchanged), then validate every UAV speed:
+Để tái tạo đúng profile grid100 của dataset chính (1.060 quỹ đạo với số route
+420/255/180/145/30/30 theo vận tốc), sinh thẳng vào thư mục dataset mới:
 
-```bash
-python scripts/convert_uav_csv.py \
-  --input-dir data/UAV_sim \
-  --output-dir data/uav_processed
-python run.py validate_3gpp \
-  --data-dir data/uav_processed \
-  --speeds 30 50 70 90
+```powershell
+.\.venv\Scripts\python.exe -m uav_simulation batch-grid100 --workers 4 --output-dir data/uav_100m_grid100m_v3
+.\.venv\Scripts\python.exe run.py train_ppo --data-dir data/uav_100m_grid100m_v3 --speeds 30 50 70 90 --output-dir results/models/uav_grid100_v3_ppo
 ```
 
-Train PPO on the normalized UAV traces with a separate checkpoint directory:
+Hoặc chuẩn hóa dữ liệu thô cũ vào một thư mục mới, trống:
 
-```bash
-python run.py train_ppo \
-  --data-dir data/uav_processed \
-  --output-dir results/models/uav_smdp_ppo
+```powershell
+.\.venv\Scripts\python.exe run.py prepare_data --input-dir data/UAV_data_100m --output-dir data/uav_generated
 ```
 
-## Benchmark policies
+Generator batch mặc định tạo 6000 mẫu/quỹ đạo, mỗi mẫu cách nhau 10 ms và một UAV
+trên mỗi route. Nó ghi luôn tên file `{rsrp|sinr}_{speed}kmh_{route}.csv`, schema
+`sample,time_ms,bs_0,...`, `simulation_manifest.json` và `dataset_metadata.json`
+kèm hash từng CSV. Vì vậy output mới đưa thẳng vào `train_ppo`, không còn bước
+`prepare_data`. Command `prepare_data` chỉ giữ lại để chuyển các bộ legacy có tên
+`ue0_*` và schema `Step,bs0,...`; các lệnh không ghi đè dữ liệu cũ.
 
-After training or downloading a checkpoint:
+## Train PPO và validate với 3GPP
 
-```bash
-python run.py benchmark \
-  --checkpoint results/models/smdp_ppo/smdp_ppo_final.pt \
-  --split test
+```powershell
+.\.venv\Scripts\python.exe run.py train_ppo --data-dir data/uav_generated --speeds 30 50 70 90 --output-dir results/models/uav_generated_ppo
+.\.venv\Scripts\python.exe run.py evaluate_ppo --data-dir data/uav_generated --checkpoint results/models/uav_generated_ppo/smdp_ppo_final.pt --split validation --output results/evaluation/uav_validation.json
+.\.venv\Scripts\python.exe run.py benchmark --data-dir data/uav_generated --checkpoint results/models/uav_generated_ppo/smdp_ppo_final.pt --split test --output-dir results/benchmark/uav_generated_ppo
 ```
 
-This compares PPO with 3GPP Always-HO and Always-Stay on the same held-out
-trajectories and writes CSV/JSON tables to `results/benchmark`.
+Train mặc định 100000 macro-step; chia toàn bộ quỹ đạo thành train/validation/test
+70/15/15, phân tầng theo tốc độ. Trước khi train, pipeline chạy 3GPP Always-HO
+trên validation split để làm mốc QoS. Mỗi lần validation đều được lưu trong
+`checkpoints/all`; `checkpoints/pareto` giữ các model chưa bị model khác vượt đồng
+thời về rate, RLF time, HOF, ping-pong và HO attempts. `smdp_ppo_final.pt` ưu tiên
+`best_qos` đạt tối thiểu 98% rate 3GPP ở toàn tập và từng tốc độ, rồi mới fallback
+sang `best_return`. Có thể đổi hai sàn bằng `--qos-rate-ratio` và
+`--qos-rate-ratio-per-speed`. Mỗi lần train chọn một thư mục model mới. Giữ
+`dataset_split_manifest.json` cạnh checkpoint:
+evaluate/benchmark sẽ dùng đúng tập đã lưu và kiểm tra hash thay vì chia lại dữ liệu.
 
-For a PPO model trained on normalized UAV traces, add
-`--data-dir data/uav_processed` and choose a separate output directory, for
-example `--output-dir results/benchmark/uav_smdp_ppo`.
+Chạy riêng baseline 3GPP:
 
-## Test
-
-```bash
-python -m unittest discover -s tests -v
+```powershell
+.\.venv\Scripts\python.exe run.py validate_3gpp --data-dir data/uav_generated --output-dir results/3gpp/uav_generated
 ```
 
-## Origin
+PPO và baseline dùng cùng cấu hình radio từ metadata dataset. Mặc định dùng chung
+của generator và handover environment là 2,1 GHz, 10 MHz, 10 ms. Dữ liệu và model
+cũ trong `data/` và `results/` được giữ nguyên; cấu hình thật của dataset cũ không
+có metadata vẫn phải được xác minh từ nguồn sinh dữ liệu.
 
-The repository originated from the code accompanying:
+## Kiểm thử và tài liệu
 
-> J. Voigt, P. J. Gu, and P. M. Rost, "A Deep Reinforcement Learning-Based
-> Approach for Adaptive Handover Protocols," SCC 2025,
-> doi:10.1109/IEEECONF62907.2025.10949111.
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
 
-The current architecture deliberately does not preserve the paper's PPO
-implementation or reported behavior.
+Lệnh này chạy cả test của HandoverOptimDRL, test tích hợp và test simulator trong
+`data_generator/tests/`.
+
+- [Thành phần tạo dữ liệu UAV](data_generator/README.md)
+- [Chi tiết tích hợp vào project chính](docs/uav_data_generator.md)
+- [PPO](docs/ppo.md), [benchmark](docs/benchmark.md), [kiến trúc](docs/architecture.md)
+- [Phạm vi và giả thiết baseline 3GPP](docs/3gpp_baseline_audit.md)
+
+Baseline gồm các quy tắc A3/TTT/RLM/RLF được kiểm tra theo TS 38.331 cùng những giả
+thiết được ghi rõ; đây không phải triển khai đầy đủ mọi thủ tục NR. Anten simulator
+sử dụng các công thức TR 38.901.

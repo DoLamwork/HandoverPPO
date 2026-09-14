@@ -5,11 +5,12 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import Mock
 
 import numpy as np
 
 from ho_optim_drl import Config, HandoverSMDPEnv
-from ho_optim_drl.data import RadioTrace
+from ho_optim_drl.data import RadioTrace, TracePair
 from ho_optim_drl.evaluation import (
     BenchmarkPolicy,
     TrajectoryDescriptor,
@@ -19,6 +20,11 @@ from ho_optim_drl.evaluation import (
     write_benchmark_outputs,
 )
 from ho_optim_drl.smdp import HandoverAction
+from scripts.benchmark_policies import (
+    build_benchmark_policies,
+    select_benchmark_pairs,
+    select_mixed_benchmark_pairs,
+)
 
 
 def _trace(trace_id: str, target_sinr_db: float) -> RadioTrace:
@@ -48,6 +54,14 @@ class BenchmarkTests(unittest.TestCase):
     def _env(self) -> HandoverSMDPEnv:
         return HandoverSMDPEnv(Config(), traces=self.traces)
 
+    def test_benchmark_command_only_uses_ppo_and_3gpp(self) -> None:
+        policies = build_benchmark_policies(Mock())
+
+        self.assertEqual(
+            [policy.name for policy in policies],
+            ["ppo", "3gpp_always_ho"],
+        )
+
     def test_fixed_policies_have_expected_action_fractions(self) -> None:
         handover_rows = benchmark_policy(
             self._env(),
@@ -60,19 +74,36 @@ class BenchmarkTests(unittest.TestCase):
         stay_rows = benchmark_policy(
             self._env(),
             BenchmarkPolicy(
-                "always_stay",
+                "fixed_stay_test_policy",
                 lambda observation: HandoverAction.STAY,
+            ),
+            self.descriptors,
+        )
+        wait_rows = benchmark_policy(
+            self._env(),
+            BenchmarkPolicy(
+                "fixed_wait_test_policy",
+                lambda observation: HandoverAction.WAIT_50,
             ),
             self.descriptors,
         )
 
         self.assertTrue(
-            all(row["handover_fraction"] == 1.0 for row in handover_rows)
+            all(
+                row["handover_action_percent"] == 100.0
+                for row in handover_rows
+            )
         )
         self.assertTrue(
-            all(row["handover_fraction"] == 0.0 for row in stay_rows)
+            all(
+                row["handover_action_percent"] == 0.0
+                for row in stay_rows
+            )
         )
         self.assertTrue(all(row["actionable"] for row in handover_rows))
+        self.assertTrue(
+            all(row["wait_action_percent"] == 100.0 for row in wait_rows)
+        )
         self.assertTrue(
             all(
                 np.isclose(
@@ -103,14 +134,16 @@ class BenchmarkTests(unittest.TestCase):
                 "controlled_reward_ping_pong": 0.0,
                 "estimated_rate_mbps": 10.0,
                 "relative_rate_percent": 50.0,
-                "connected_fraction": 0.8,
+                "connected_percent": 80.0,
                 "macro_steps": 2,
                 "handover_actions": 1,
                 "stay_actions": 1,
+                "wait_actions": 0,
                 "ho_attempts": 2,
                 "ho_successes": 1,
                 "handover_failures": 1,
                 "rlf_events": 1,
+                "rlf_recovery_time_s": 1.0,
                 "ping_pong_events": 1,
             },
             {
@@ -125,14 +158,16 @@ class BenchmarkTests(unittest.TestCase):
                 "controlled_reward_ping_pong": 0.0,
                 "estimated_rate_mbps": 30.0,
                 "relative_rate_percent": 75.0,
-                "connected_fraction": 1.0,
+                "connected_percent": 100.0,
                 "macro_steps": 4,
                 "handover_actions": 3,
                 "stay_actions": 1,
+                "wait_actions": 2,
                 "ho_attempts": 3,
                 "ho_successes": 3,
                 "handover_failures": 0,
                 "rlf_events": 2,
+                "rlf_recovery_time_s": 2.0,
                 "ping_pong_events": 1,
             },
         ]
@@ -143,10 +178,14 @@ class BenchmarkTests(unittest.TestCase):
             aggregate["duration_weighted_rate_mbps"],
             25.0,
         )
-        self.assertAlmostEqual(aggregate["rlf_rate_per_100s"], 7.5)
-        self.assertAlmostEqual(aggregate["handover_failure_rate"], 0.2)
-        self.assertAlmostEqual(aggregate["ping_pong_rate"], 0.5)
-        self.assertAlmostEqual(aggregate["handover_fraction"], 2 / 3)
+        self.assertAlmostEqual(aggregate["rlf_time_percent"], 7.5)
+        self.assertAlmostEqual(aggregate["handover_failure_percent"], 20.0)
+        self.assertAlmostEqual(aggregate["ping_pong_percent"], 50.0)
+        self.assertAlmostEqual(
+            aggregate["handover_action_percent"],
+            50.0,
+        )
+        self.assertAlmostEqual(aggregate["wait_action_percent"], 25.0)
 
     def test_paired_comparison_matches_trajectory_ids(self) -> None:
         rows = [
@@ -182,8 +221,8 @@ class BenchmarkTests(unittest.TestCase):
         rows = benchmark_policy(
             self._env(),
             BenchmarkPolicy(
-                "always_stay",
-                lambda observation: HandoverAction.STAY,
+                "ppo",
+                lambda observation: HandoverAction.HANDOVER,
             ),
             self.descriptors,
         )
@@ -191,7 +230,7 @@ class BenchmarkTests(unittest.TestCase):
         by_speed = aggregate_benchmark_rows(rows, by_speed=True)
         comparisons = [
             {
-                "policy": "always_stay",
+                "policy": "ppo",
                 "reference_policy": "3gpp_always_ho",
                 "paired_trajectories": 2,
             }
@@ -217,7 +256,116 @@ class BenchmarkTests(unittest.TestCase):
 
         self.assertEqual(len(csv_rows), 2)
         self.assertEqual(summary["metadata"]["split"], "test")
-        self.assertEqual(summary["aggregate"][0]["policy"], "always_stay")
+        self.assertEqual(summary["aggregate"][0]["policy"], "ppo")
+
+    def test_all_split_can_select_unseen_speeds(self) -> None:
+        pairs = [
+            TracePair(120, 0, "rsrp_120kmh_0.csv", "sinr_120kmh_0.csv"),
+            TracePair(120, 1, "rsrp_120kmh_1.csv", "sinr_120kmh_1.csv"),
+            TracePair(150, 0, "rsrp_150kmh_0.csv", "sinr_150kmh_0.csv"),
+            TracePair(90, 0, "rsrp_90kmh_0.csv", "sinr_90kmh_0.csv"),
+        ]
+
+        selected = select_benchmark_pairs(
+            pairs,
+            split="all",
+            split_seed=17,
+            speeds=[120, 150],
+        )
+
+        self.assertEqual(len(selected), 3)
+        self.assertEqual({pair.speed_kmh for pair in selected}, {120, 150})
+
+    def test_speed_selection_rejects_missing_data(self) -> None:
+        pairs = [
+            TracePair(120, 0, "rsrp_120kmh_0.csv", "sinr_120kmh_0.csv"),
+        ]
+
+        with self.assertRaisesRegex(ValueError, "150 km/h"):
+            select_benchmark_pairs(
+                pairs,
+                split="all",
+                split_seed=17,
+                speeds=[120, 150],
+            )
+
+    def test_custom_test_split_selects_12_routes_per_speed(self) -> None:
+        speeds = (30, 50, 70, 90, 120, 150)
+        pairs = [
+            TracePair(
+                speed,
+                trajectory_id,
+                f"rsrp_{speed}kmh_{trajectory_id}.csv",
+                f"sinr_{speed}kmh_{trajectory_id}.csv",
+            )
+            for speed in speeds
+            for trajectory_id in range(60)
+        ]
+
+        selected = select_benchmark_pairs(
+            pairs,
+            split="test",
+            split_seed=17,
+            speeds=None,
+            train_fraction=0.60,
+            validation_fraction=0.20,
+            test_fraction=0.20,
+        )
+
+        self.assertEqual(len(selected), 72)
+        for speed in speeds:
+            self.assertEqual(
+                sum(pair.speed_kmh == speed for pair in selected),
+                12,
+            )
+
+    def test_mixed_split_combines_seen_test_and_all_zero_shot_routes(
+        self,
+    ) -> None:
+        counts = {30: 420, 50: 255, 70: 180, 90: 145, 120: 30, 150: 30}
+        pairs = [
+            TracePair(
+                speed,
+                trajectory_id,
+                f"rsrp_{speed}kmh_{trajectory_id}.csv",
+                f"sinr_{speed}kmh_{trajectory_id}.csv",
+            )
+            for speed, count in counts.items()
+            for trajectory_id in range(count)
+        ]
+
+        selected = select_mixed_benchmark_pairs(
+            pairs,
+            split="test",
+            split_seed=17,
+            speeds=[30, 50, 70, 90],
+            zero_shot_speeds=[120, 150],
+            train_fraction=0.60,
+            validation_fraction=0.20,
+            test_fraction=0.20,
+        )
+
+        expected_counts = {30: 84, 50: 51, 70: 36, 90: 29, 120: 30, 150: 30}
+        self.assertEqual(len(selected), 260)
+        for speed, expected in expected_counts.items():
+            self.assertEqual(
+                sum(pair.speed_kmh == speed for pair in selected),
+                expected,
+            )
+
+    def test_mixed_split_rejects_overlapping_speed_groups(self) -> None:
+        pairs = [
+            TracePair(90, 0, "rsrp_90kmh_0.csv", "sinr_90kmh_0.csv"),
+        ]
+
+        with self.assertRaisesRegex(ValueError, "overlap"):
+            select_mixed_benchmark_pairs(
+                pairs,
+                split="test",
+                split_seed=17,
+                speeds=[90],
+                zero_shot_speeds=[90],
+            )
 
 
 if __name__ == "__main__":

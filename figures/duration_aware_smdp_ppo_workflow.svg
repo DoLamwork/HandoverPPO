@@ -1,0 +1,161 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1050" viewBox="0 0 1800 1050">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#263238"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b43c36"/>
+    </marker>
+    <style>
+      .title { font: 700 34px 'Times New Roman', serif; fill: #111827; }
+      .stage { font: 700 25px 'Times New Roman', serif; fill: #111827; }
+      .box-title { font: 700 23px 'Times New Roman', serif; fill: #111827; }
+      .body { font: 19px 'Times New Roman', serif; fill: #1f2933; }
+      .small { font: 17px 'Times New Roman', serif; fill: #374151; }
+      .math { font: italic 20px 'Times New Roman', serif; fill: #111827; }
+      .arrow-label { font: 700 18px 'Times New Roman', serif; fill: #263238; }
+      .learning-label { font: 700 18px 'Times New Roman', serif; fill: #9f2d28; }
+      .outer { stroke-width: 3; rx: 6; ry: 6; }
+      .inner { stroke-width: 2.5; rx: 6; ry: 6; }
+      .flow { fill: none; stroke: #263238; stroke-width: 3; marker-end: url(#arrow); }
+      .feedback { fill: none; stroke: #b43c36; stroke-width: 4; stroke-dasharray: 11 8; marker-end: url(#arrow-red); }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1800" height="1050" fill="#ffffff"/>
+  <text x="900" y="58" text-anchor="middle" class="title">Event-Driven Duration-Aware SMDP-PPO Workflow</text>
+
+  <!-- Shared trace-driven environment -->
+  <rect x="48" y="150" width="400" height="480" class="outer" fill="#eef6ff" stroke="#4f83cc"/>
+  <text x="248" y="188" text-anchor="middle" class="stage">Trace-Driven Environment</text>
+
+  <rect x="88" y="225" width="320" height="105" class="inner" fill="#ffffff" stroke="#4f83cc"/>
+  <text x="248" y="257" text-anchor="middle" class="box-title">Radio Trajectories</text>
+  <text x="248" y="286" text-anchor="middle" class="body">Pre-generated RSRP/SINR</text>
+  <text x="248" y="312" text-anchor="middle" class="small">One synchronized pair per UE route</text>
+
+  <path d="M248 330 V365" class="flow"/>
+
+  <rect x="88" y="365" width="320" height="210" class="inner" fill="#ffffff" stroke="#4f83cc"/>
+  <text x="248" y="398" text-anchor="middle" class="box-title">3GPP Protocol Engine</text>
+  <text x="118" y="434" class="body">• Event A3 and TTT</text>
+  <text x="118" y="464" class="body">• HO preparation/execution</text>
+  <text x="118" y="494" class="body">• RLM and RLF recovery</text>
+  <text x="118" y="524" class="body">• Ping-pong detection</text>
+  <text x="248" y="558" text-anchor="middle" class="small">Advance to next A3 decision or trace end</text>
+
+  <!-- Stage 1: interaction and policy -->
+  <rect x="490" y="100" width="1260" height="530" class="outer" fill="#faf9ff" stroke="#7668aa"/>
+  <text x="1120" y="139" text-anchor="middle" class="stage">Stage 1 — On-Policy Training in the Simulator</text>
+
+  <!-- State construction -->
+  <rect x="530" y="180" width="330" height="345" class="inner" fill="#f2f9f3" stroke="#5a9367"/>
+  <text x="695" y="216" text-anchor="middle" class="box-title">State Construction</text>
+  <text x="560" y="255" class="body">• Link quality</text>
+  <text x="560" y="289" class="body">• Measurement margin</text>
+  <text x="560" y="323" class="body">• Radio trends</text>
+  <text x="560" y="357" class="body">• RLM status</text>
+  <text x="560" y="391" class="body">• Handover history</text>
+  <line x1="560" y1="420" x2="830" y2="420" stroke="#a7c8ae" stroke-width="2"/>
+  <text x="695" y="458" text-anchor="middle" class="math">sₖ ∈ ℝ¹⁹</text>
+  <text x="695" y="490" text-anchor="middle" class="small">Built at a completed A3 event</text>
+
+  <!-- Actor critic -->
+  <rect x="910" y="180" width="350" height="345" class="inner" fill="#f7f3fb" stroke="#8064a2"/>
+  <text x="1085" y="216" text-anchor="middle" class="box-title">Actor–Critic Network</text>
+
+  <rect x="950" y="250" width="270" height="92" class="inner" fill="#ffffff" stroke="#8064a2"/>
+  <text x="1085" y="281" text-anchor="middle" class="box-title">Actor</text>
+  <text x="1085" y="315" text-anchor="middle" class="math">πθ(aₖ | sₖ)</text>
+
+  <rect x="950" y="375" width="270" height="92" class="inner" fill="#ffffff" stroke="#8064a2"/>
+  <text x="1085" y="406" text-anchor="middle" class="box-title">Critic</text>
+  <text x="1085" y="440" text-anchor="middle" class="math">Vφ(sₖ)</text>
+
+  <text x="1085" y="499" text-anchor="middle" class="small">Both networks receive the 19-D state</text>
+
+  <!-- Output actions -->
+  <rect x="1310" y="180" width="390" height="345" class="inner" fill="#fff7ea" stroke="#d99032"/>
+  <text x="1505" y="216" text-anchor="middle" class="box-title">Action Selection</text>
+  <text x="1505" y="254" text-anchor="middle" class="small">Sample from the actor during training</text>
+
+  <rect x="1360" y="290" width="290" height="72" class="inner" fill="#ffffff" stroke="#d99032" stroke-dasharray="9 6"/>
+  <text x="1505" y="334" text-anchor="middle" class="box-title">STAY</text>
+
+  <rect x="1360" y="395" width="290" height="72" class="inner" fill="#ffffff" stroke="#d99032" stroke-dasharray="9 6"/>
+  <text x="1505" y="439" text-anchor="middle" class="box-title">HANDOVER</text>
+
+  <text x="1505" y="500" text-anchor="middle" class="math">aₖ ∈ {0, 1}</text>
+
+  <!-- Interaction arrows -->
+  <path d="M408 455 H530" class="flow"/>
+  <text x="469" y="438" text-anchor="middle" class="arrow-label">Protocol snapshot</text>
+
+  <path d="M860 345 H910" class="flow"/>
+  <text x="885" y="327" text-anchor="middle" class="arrow-label">sₖ</text>
+
+  <path d="M1260 326 H1310" class="flow"/>
+  <text x="1285" y="308" text-anchor="middle" class="arrow-label">πθ</text>
+
+  <path d="M1505 525 V590 H248 V575" class="flow"/>
+  <text x="870" y="580" text-anchor="middle" class="arrow-label">Execute aₖ and advance the protocol</text>
+
+  <!-- Learning block -->
+  <rect x="490" y="690" width="900" height="295" class="outer" fill="#fff5f4" stroke="#cc5c54"/>
+  <text x="940" y="729" text-anchor="middle" class="stage">Learning Path</text>
+
+  <rect x="530" y="770" width="250" height="145" class="inner" fill="#ffffff" stroke="#cc5c54"/>
+  <text x="655" y="805" text-anchor="middle" class="box-title">Rollout Buffer</text>
+  <text x="655" y="841" text-anchor="middle" class="math">(sₖ,aₖ,rₖ,τₖ,sₖ₊₁,dₖ)</text>
+  <text x="655" y="873" text-anchor="middle" class="small">old log-probability and values</text>
+  <text x="655" y="898" text-anchor="middle" class="small">N macro-transitions</text>
+
+  <rect x="825" y="770" width="235" height="145" class="inner" fill="#ffffff" stroke="#cc5c54"/>
+  <text x="943" y="805" text-anchor="middle" class="box-title">Duration-Aware GAE</text>
+  <text x="943" y="843" text-anchor="middle" class="math">Γₖ = γsec^τₖ</text>
+  <text x="943" y="873" text-anchor="middle" class="math">Λₖ = λsec^τₖ</text>
+  <text x="943" y="900" text-anchor="middle" class="small">Advantages Âₖ and returns Ĝₖ</text>
+
+  <rect x="1105" y="755" width="245" height="175" class="inner" fill="#fff0ee" stroke="#b43c36" stroke-width="4"/>
+  <text x="1228" y="782" text-anchor="middle" class="learning-label">LEARNING POINT</text>
+  <text x="1228" y="815" text-anchor="middle" class="box-title">Clipped PPO Update</text>
+  <text x="1228" y="850" text-anchor="middle" class="body">Policy · Value · Entropy</text>
+  <text x="1228" y="884" text-anchor="middle" class="body">Backpropagation</text>
+  <text x="1228" y="916" text-anchor="middle" class="math">Update θ and φ</text>
+
+  <path d="M780 843 H825" class="flow"/>
+  <path d="M1060 843 H1105" class="flow"/>
+
+  <!-- Environment and critic feed the rollout -->
+  <path d="M248 630 V842 H530" class="flow"/>
+  <text x="367" y="822" text-anchor="middle" class="arrow-label">rₖ, τₖ, sₖ₊₁, dₖ</text>
+
+  <path d="M1085 525 V660 H700 V770" class="flow"/>
+  <text x="891" y="651" text-anchor="middle" class="arrow-label">log πold and V-values</text>
+
+  <!-- Parameter learning feedback -->
+  <path d="M1330 755 V665 H1085 V525" class="feedback"/>
+  <text x="1208" y="650" text-anchor="middle" class="learning-label">Gradient update: θ, φ</text>
+
+  <!-- Stage 2 -->
+  <rect x="1430" y="690" width="320" height="295" class="outer" fill="#effafb" stroke="#2f8f9d"/>
+  <text x="1590" y="729" text-anchor="middle" class="stage">Stage 2 — Evaluation</text>
+
+  <rect x="1465" y="770" width="250" height="72" class="inner" fill="#ffffff" stroke="#2f8f9d"/>
+  <text x="1590" y="800" text-anchor="middle" class="box-title">Best Checkpoint</text>
+  <text x="1590" y="827" text-anchor="middle" class="math">θ*</text>
+
+  <rect x="1465" y="870" width="250" height="82" class="inner" fill="#ffffff" stroke="#2f8f9d"/>
+  <text x="1590" y="900" text-anchor="middle" class="box-title">Inference &amp; Benchmark</text>
+  <text x="1590" y="928" text-anchor="middle" class="small">Relative rate · HOF · RLF · PP</text>
+
+  <path d="M1350 843 H1465" class="flow"/>
+  <text x="1408" y="824" text-anchor="middle" class="arrow-label">Validation</text>
+  <path d="M1590 842 V870" class="flow"/>
+
+  <!-- Legend -->
+  <line x1="72" y1="1014" x2="122" y2="1014" stroke="#263238" stroke-width="3" marker-end="url(#arrow)"/>
+  <text x="140" y="1020" class="small">Environment interaction and data flow</text>
+  <line x1="520" y1="1014" x2="570" y2="1014" stroke="#b43c36" stroke-width="4" stroke-dasharray="11 8" marker-end="url(#arrow-red)"/>
+  <text x="588" y="1020" class="small">Parameter-learning feedback</text>
+</svg>

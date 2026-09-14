@@ -8,6 +8,7 @@ from .trainer import (
     EvaluationMetrics,
     PPOUpdateMetrics,
     SMDPPPO,
+    ValidationCheckpointManager,
 )
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "SMDPPPO",
     "SMDPPPOConfig",
     "SMDPRolloutBuffer",
+    "ValidationCheckpointManager",
 ]

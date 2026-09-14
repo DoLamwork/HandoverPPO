@@ -186,11 +186,11 @@ def print_statistics(stat_dict: dict[str, int | float]) -> None:
         "# HO exe error",
         "",
         "# HOF",
-        "# HOF rate",
+        "HOF rate",
         "# RLF",
-        "# RLF / 100 s",
+        "RLF recovery time",
         "# PP",
-        "# PP rate",
+        "PP rate",
     ]
     values = [
         "Value",
@@ -225,11 +225,11 @@ def print_statistics(stat_dict: dict[str, int | float]) -> None:
         f"{stat_dict['num_ho_exe_error']}",
         "",
         f"{stat_dict['num_hof']}",
-        f"{100 * stat_dict['hof_rate']:.3f}%",
+        f"{stat_dict['hof_percent']:.3f}%",
         f"{stat_dict['num_rlf']}",
-        f"{stat_dict['rlf_rate_per_100s']:.3f}",
+        f"{stat_dict['rlf_time_percent']:.3f}%",
         f"{stat_dict['num_pp']}",
-        f"{100 * stat_dict['pp_rate']:.3f}%",
+        f"{stat_dict['pp_percent']:.3f}%",
     ]
     tab = list(zip(params, values))
     max_param_len = max(len(row[0]) for row in tab)
@@ -256,9 +256,9 @@ def print_aggregated_stats(stats: dict):
         "",
         "Speed",
         "Avg relative rate",
-        "Avg PP prob",
-        "Avg HOF prob",
-        "RLF events / 100 s",
+        "PP rate",
+        "HOF rate",
+        "RLF recovery time",
         "",
         "Avg # HO prep started",
         "Avg # HO prep terminated",
@@ -278,7 +278,7 @@ def print_aggregated_stats(stats: dict):
         "VALUES",
         f"{len(stats['spectral_eff'])}",
         "",
-        f"{100 * np.mean(stats["r_rel"]):6.3f} %",
+        f"{np.mean(stats['relative_rate_percent']):6.3f} %",
         "",
         (
             f"[{"".join([f"{speed:6d}, " for speed in stats['speed']])}] km/h"
@@ -286,24 +286,24 @@ def print_aggregated_stats(stats: dict):
             else f"{stats["speed"][0]:6d} km/h"
         ),
         (
-            f"[{"".join([f"{100*r_rel:6.3f}, " for r_rel in stats['r_rel']])}] %"
-            if len(stats["r_rel"]) > 1
-            else f"{100*stats['r_rel'][0]:6.3f} %"
+            f"[{"".join([f"{value:6.3f}, " for value in stats['relative_rate_percent']])}] %"
+            if len(stats["relative_rate_percent"]) > 1
+            else f"{stats['relative_rate_percent'][0]:6.3f} %"
         ),
         (
-            f"[{"".join([f"{100*pp_prob:6.3f}, " for pp_prob in stats['mean_pp_rate']])}] %"
-            if len(stats["mean_pp_rate"]) > 1
-            else f"{100*stats['mean_pp_rate'][0]:6.3f} %"
+            f"[{"".join([f"{value:6.3f}, " for value in stats['pp_percent']])}] %"
+            if len(stats["pp_percent"]) > 1
+            else f"{stats['pp_percent'][0]:6.3f} %"
         ),
         (
-            f"[{"".join([f"{100*hof_prob:6.3f}, " for hof_prob in stats['mean_hof_rate']])}] %"
-            if len(stats["mean_hof_rate"]) > 1
-            else f"{100*stats['mean_hof_rate'][0]:6.3f} %"
+            f"[{"".join([f"{value:6.3f}, " for value in stats['hof_percent']])}] %"
+            if len(stats["hof_percent"]) > 1
+            else f"{stats['hof_percent'][0]:6.3f} %"
         ),
         (
-            f"[{"".join([f"{rate:6.3f}, " for rate in stats['rlf_per_100s']])}]"
-            if len(stats["rlf_per_100s"]) > 1
-            else f"{stats['rlf_per_100s'][0]:6.3f}"
+            f"[{"".join([f"{value:6.3f}, " for value in stats['rlf_time_percent']])}] %"
+            if len(stats["rlf_time_percent"]) > 1
+            else f"{stats['rlf_time_percent'][0]:6.3f} %"
         ),
         "",
         f"{np.mean(stats['num_ho_prep_started']):5.2f}",

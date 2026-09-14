@@ -1,4 +1,4 @@
-"""Actor-critic network for binary handover decisions."""
+"""Actor-critic network for categorical handover decisions."""
 
 from __future__ import annotations
 

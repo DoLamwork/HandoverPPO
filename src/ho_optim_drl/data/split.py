@@ -1,5 +1,6 @@
 """Trajectory-level discovery and deterministic stratified splitting."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 import os
 import re
@@ -68,6 +69,29 @@ def discover_trace_pairs(data_dir: str) -> list[TracePair]:
         TracePair(speed, trajectory_id, files["rsrp"], files["sinr"])
         for (speed, trajectory_id), files in sorted(discovered.items())
     ]
+
+
+def filter_trace_pairs_by_speed(
+    pairs: list[TracePair],
+    speeds: Iterable[int] | None,
+) -> list[TracePair]:
+    """Keep requested speed strata and reject unavailable speed values."""
+    if speeds is None:
+        return list(pairs)
+
+    requested = {int(speed) for speed in speeds}
+    if not requested:
+        raise ValueError("At least one training speed is required.")
+
+    available = {pair.speed_kmh for pair in pairs}
+    missing = sorted(requested - available)
+    if missing:
+        raise ValueError(
+            f"Requested speeds are not present in the dataset: {missing}. "
+            f"Available speeds: {sorted(available)}"
+        )
+
+    return [pair for pair in pairs if pair.speed_kmh in requested]
 
 
 def stratified_trajectory_split(

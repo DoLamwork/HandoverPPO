@@ -20,9 +20,11 @@ class HandoverEngine(A3ReferenceSimulator):
     Shared protocol engine for heuristic and learned handover policies.
 
     The engine consumes a ``RadioTrace``, advances one radio sample at a time,
-    and pauses at a completed A3+TTT event until ``stay()`` or
-    ``start_handover()`` is called.
+    and pauses at a completed A3+TTT event until ``stay()``,
+    ``start_handover()``, or ``wait_50()`` is called.
     """
+
+    WAIT_50_MS = 50
 
     def __init__(self, protocol_config: "Config") -> None:
         super().__init__(protocol_config)
@@ -32,6 +34,8 @@ class HandoverEngine(A3ReferenceSimulator):
         self._terminated = False
         self._decision_point: DecisionPoint | None = None
         self._suppressed_event: tuple[int, int] | None = None
+        self._deferred_decision: DecisionPoint | None = None
+        self._defer_until_tic: int | None = None
         self._handover_started_pending = False
         self._serving_residence_start_tic = 0
         self._last_ho_tic: int | None = None
@@ -52,6 +56,8 @@ class HandoverEngine(A3ReferenceSimulator):
         self._terminated = False
         self._decision_point = None
         self._suppressed_event = None
+        self._deferred_decision = None
+        self._defer_until_tic = None
         self._handover_started_pending = False
         self._serving_residence_start_tic = 0
         self._last_ho_tic = None
@@ -132,6 +138,24 @@ class HandoverEngine(A3ReferenceSimulator):
         self._decision_point = None
         self.event_handler.target_cell = None
 
+    def wait_50(self) -> None:
+        """Keep the current A3 event alive and reconsider it after 50 ms."""
+        decision = self._require_decision()
+        if self.WAIT_50_MS % self.config.delta_t_ms:
+            raise ValueError(
+                f"WAIT_50 requires {self.WAIT_50_MS} ms to be divisible by "
+                f"delta_t_ms={self.config.delta_t_ms} ms."
+            )
+        wait_ticks = self.WAIT_50_MS // self.config.delta_t_ms
+        if wait_ticks <= 0:
+            raise ValueError("WAIT_50 must span at least one primitive tick.")
+
+        self._deferred_decision = decision
+        self._defer_until_tic = decision.tic + wait_ticks
+        self._decision_point = None
+        self._suppressed_event = None
+        self.event_handler.target_cell = decision.target_cell
+
     def start_handover(self) -> None:
         """Start preparation toward the target latched at the decision point."""
         decision = self._require_decision()
@@ -142,6 +166,8 @@ class HandoverEngine(A3ReferenceSimulator):
         self.cntr["ho_prep"].start(decision.tic)
         self._decision_point = None
         self._suppressed_event = None
+        self._deferred_decision = None
+        self._defer_until_tic = None
         self._handover_started_pending = True
 
     def advance_one_tick(self) -> TickResult:
@@ -149,7 +175,8 @@ class HandoverEngine(A3ReferenceSimulator):
         self._require_trace()
         if self._decision_point is not None:
             raise RuntimeError(
-                "A decision is pending; call stay() or start_handover() first."
+                "A decision is pending; call stay(), wait_50(), or "
+                "start_handover() first."
             )
         if self._terminated:
             raise RuntimeError("The trace episode has already terminated.")
@@ -218,13 +245,16 @@ class HandoverEngine(A3ReferenceSimulator):
         del args, kwargs
         raise RuntimeError(
             "HandoverEngine is action-controlled. Use reset(), "
-            "advance_one_tick(), stay(), and start_handover()."
+            "advance_one_tick(), stay(), wait_50(), and start_handover()."
         )
 
     def _measurement_event_handler(
         self, rsrp_db: np.ndarray, tic: int
     ) -> None:
-        """Run A3/TTT while honoring a rejected-event latch."""
+        """Run A3/TTT while honoring deferred and rejected event latches."""
+        if self._deferred_decision is not None:
+            self._deferred_event_handler(rsrp_db, tic)
+            return
         if self._suppressed_event is None:
             self._msr_event_handler(rsrp_db, tic)
             return
@@ -247,6 +277,53 @@ class HandoverEngine(A3ReferenceSimulator):
         )
         if not a3_entered:
             self._clear_suppression()
+
+    def _deferred_event_handler(
+        self,
+        rsrp_db: np.ndarray,
+        tic: int,
+    ) -> None:
+        """Re-offer one unchanged A3 event exactly 50 ms after WAIT_50."""
+        decision = self._deferred_decision
+        defer_until_tic = self._defer_until_tic
+        if decision is None or defer_until_tic is None:
+            raise RuntimeError("Deferred decision state is incomplete.")
+
+        pcell = self.rrc.pcell
+        ncell = self.rrc.ncell
+        if pcell != decision.serving_cell or ncell != decision.target_cell:
+            self._clear_deferred_decision(reset_a3=True)
+            self._msr_event_handler(rsrp_db, tic)
+            return
+
+        a3_entered = self.event_handler.event_a3(
+            rsrp_db,
+            pcell,
+            ncell,
+            tic,
+        )
+        if not a3_entered:
+            self._clear_deferred_decision()
+            return
+        if tic < defer_until_tic:
+            return
+
+        margin_db = (
+            rsrp_db[decision.target_cell]
+            - rsrp_db[decision.serving_cell]
+            - self.config.a3_hys
+            - self.config.a3_off
+        )
+        self._deferred_decision = None
+        self._defer_until_tic = None
+        self.event_handler.target_cell = decision.target_cell
+        self._decision_point = DecisionPoint(
+            tic=tic,
+            serving_cell=decision.serving_cell,
+            target_cell=decision.target_cell,
+            a3_start_tic=decision.a3_start_tic,
+            a3_margin_db=float(margin_db),
+        )
 
     def _action_controlled_ho_state_machine(
         self,
@@ -296,6 +373,13 @@ class HandoverEngine(A3ReferenceSimulator):
 
     def _clear_suppression(self, reset_a3: bool = False) -> None:
         self._suppressed_event = None
+        self.event_handler.target_cell = None
+        if reset_a3:
+            self.event_handler.conditions["a3"] = False
+
+    def _clear_deferred_decision(self, reset_a3: bool = False) -> None:
+        self._deferred_decision = None
+        self._defer_until_tic = None
         self.event_handler.target_cell = None
         if reset_a3:
             self.event_handler.conditions["a3"] = False

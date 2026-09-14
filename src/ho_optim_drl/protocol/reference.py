@@ -385,16 +385,28 @@ class A3ReferenceSimulator:
         num_hof = len(self.cntr["ho_exec"].error_idxs)
         num_rlf = len(self.cntr["rlfr"].start_idxs)
         num_pp = len(self.ping_pong_idxs)
-        duration_s = len(self.bs_idxs) * self.config.delta_t_ms / 1000
+        total_samples = len(self.bs_idxs)
+        rlf_recovery_samples = int(np.count_nonzero(self.rlfr_idxs))
+        rlf_recovery_time_s = (
+            rlf_recovery_samples * self.config.delta_t_ms / 1000
+        )
         return {
             "num_hof": num_hof,
-            "hof_rate": num_hof / num_ho_attempts if num_ho_attempts else 0.0,
+            "hof_percent": (
+                100 * num_hof / num_ho_attempts if num_ho_attempts else 0.0
+            ),
             "num_rlf": num_rlf,
-            "rlf_rate_per_100s": (
-                100 * num_rlf / duration_s if duration_s > 0 else 0.0
+            "rlf_recovery_samples": rlf_recovery_samples,
+            "rlf_recovery_time_s": rlf_recovery_time_s,
+            "rlf_time_percent": (
+                100 * rlf_recovery_samples / total_samples
+                if total_samples
+                else 0.0
             ),
             "num_pp": num_pp,
-            "pp_rate": num_pp / num_ho_success if num_ho_success else 0.0,
+            "pp_percent": (
+                100 * num_pp / num_ho_success if num_ho_success else 0.0
+            ),
         }
 
     def get_log(self) -> dict[str, Any]:
@@ -512,11 +524,13 @@ class A3ReferenceSimulator:
             "num_ho_exe_failed": None,
             "num_ho_exe_error": None,
             "num_hof": None,
-            "hof_rate": None,
+            "hof_percent": None,
             "num_rlf": None,
-            "rlf_rate_per_100s": None,
+            "rlf_recovery_samples": None,
+            "rlf_recovery_time_s": None,
+            "rlf_time_percent": None,
             "num_pp": None,
-            "pp_rate": None,
+            "pp_percent": None,
         }
 
 

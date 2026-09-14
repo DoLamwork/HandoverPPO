@@ -1,5 +1,7 @@
 """Gymnasium API tests for the handover SMDP environment."""
 
+import os
+import tempfile
 import unittest
 
 import gymnasium as gym
@@ -57,7 +59,7 @@ class HandoverGymContractTests(unittest.TestCase):
         observation, reset_info = env.reset(seed=7)
 
         self.assertIsInstance(env.action_space, gym.spaces.Discrete)
-        self.assertEqual(env.action_space.n, 2)
+        self.assertEqual(env.action_space.n, 3)
         self.assertTrue(env.observation_space.contains(observation))
         self.assertEqual(reset_info["trace_id"], "terminal")
         self.assertEqual(reset_info["uncontrolled_duration_ticks"], 5)
@@ -140,7 +142,7 @@ class HandoverGymContractTests(unittest.TestCase):
             env.step(0)
         env.reset()
         with self.assertRaises(ValueError):
-            env.step(2)
+            env.step(3)
 
     def test_constructor_rejects_ambiguous_or_empty_sources(self) -> None:
         trace = _decision_trace("trace")
@@ -152,18 +154,38 @@ class HandoverGymContractTests(unittest.TestCase):
             HandoverSMDPEnv()
 
     def test_csv_trace_pair_path_exposes_dataset_metadata(self) -> None:
-        pair = discover_trace_pairs("data/processed")[0]
-        env = HandoverSMDPEnv(
-            data_dir="data/processed",
-            trace_pairs=[pair],
-        )
+        with tempfile.TemporaryDirectory() as directory:
+            header = "sample,time_ms,bs_0,bs_1\n"
+            measurements = {
+                "rsrp": (-80, -77),
+                "sinr": (5, 2),
+            }
+            for kind, values in measurements.items():
+                rows = "".join(
+                    f"{sample},{sample * 10},{values[0]},{values[1]}\n"
+                    for sample in range(12)
+                )
+                with open(
+                    os.path.join(directory, f"{kind}_30kmh_0.csv"),
+                    "w",
+                    encoding="utf-8",
+                ) as output_file:
+                    output_file.write(header + rows)
+            pair = discover_trace_pairs(directory)[0]
+            env = HandoverSMDPEnv(
+                data_dir=directory,
+                trace_pairs=[pair],
+            )
 
-        observation, info = env.reset(options={"trace_index": 0})
+            observation, info = env.reset(options={"trace_index": 0})
 
-        self.assertTrue(env.observation_space.contains(observation))
-        self.assertEqual(info["speed_kmh"], pair.speed_kmh)
-        self.assertEqual(info["trajectory_id"], pair.trajectory_id)
-        self.assertEqual(info["trace_id"], f"{pair.speed_kmh}kmh_{pair.trajectory_id}")
+            self.assertTrue(env.observation_space.contains(observation))
+            self.assertEqual(info["speed_kmh"], pair.speed_kmh)
+            self.assertEqual(info["trajectory_id"], pair.trajectory_id)
+            self.assertEqual(
+                info["trace_id"],
+                f"{pair.speed_kmh}kmh_{pair.trajectory_id}",
+            )
 
     def test_environment_passes_gymnasium_checker(self) -> None:
         env = HandoverSMDPEnv(

@@ -6,15 +6,22 @@ standard Gymnasium API.
 ## Spaces
 
 ```text
-action_space      = Discrete(2)
+action_space      = Discrete(3)
 0                 = STAY
 1                 = HANDOVER
+2                 = WAIT_50
 observation_space = Box(shape=(19,), dtype=float32)
 ```
 
 An observation is returned only after A3 has remained valid for TTT. Calling
 `step(action)` executes that action and advances the protocol internally until
 the next completed A3 event or the end of the trajectory.
+
+`STAY` rejects and suppresses the current serving-target event until A3 leaves
+or the target changes. `HANDOVER` starts handover to the latched A3 target.
+`WAIT_50` advances five 10 ms radio ticks without suppressing that event, then
+offers it again if the same serving-target pair is still A3-valid. If it is no
+longer valid, the wait is cancelled and normal A3/TTT processing resumes.
 
 ## Dataset setup
 
@@ -28,12 +35,12 @@ from ho_optim_drl.data import (
     stratified_trajectory_split,
 )
 
-pairs = discover_trace_pairs("data/processed")
+pairs = discover_trace_pairs("data/uav_100m_grid100m_dev_processed")
 splits = stratified_trajectory_split(pairs, seed=17)
 
 env = HandoverSMDPEnv(
     Config(),
-    data_dir="data/processed",
+    data_dir="data/uav_100m_grid100m_dev_processed",
     trace_pairs=splits.train,
 )
 ```

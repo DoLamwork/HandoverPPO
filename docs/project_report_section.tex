@@ -1,0 +1,513 @@
+% Technical report fragment for inclusion in a larger LaTeX document.
+% Suggested packages: amsmath, booktabs, graphicx.
+% Suggested bibliography keys: 3gpp38331, 3gpp38133, schulman2017ppo.
+
+\section{Technical Description of the Event-Triggered PPO Handover Framework}
+\label{sec:project-technical-report}
+
+This section documents the current implementation and experimental status of
+the project. Its purpose is to provide a complete technical reference from
+which the final paper structure can later be derived. The framework studies
+adaptive handover decisions for a cellular-connected unmanned aerial vehicle
+(UAV) using pre-generated RSRP and SINR traces. A protocol engine first
+reproduces the main timing and state transitions of an Event A3 handover. A
+Proximal Policy Optimization (PPO) agent is then inserted at completed A3
+decision opportunities to decide whether the candidate handover should be
+accepted or rejected. All reported policies share the same traces, radio
+processing, handover delays, radio-link-failure logic, and evaluation code.
+
+\subsection{Project Objective and Scope}
+
+The objective is to learn a handover policy that improves connection
+reliability and reduces unnecessary mobility events without causing a large
+loss in delivered rate. In particular, the project considers four outcomes:
+estimated data rate, radio link failure (RLF), handover failure (HOF), and
+ping-pong (PP) handover. These objectives are coupled. Triggering every valid
+A3 event generally follows the strongest filtered-RSRP candidate more closely,
+but it can cause unnecessary or unsuccessful handovers. Rejecting too many A3
+events avoids handover interruption but can leave the UAV connected to a
+deteriorating serving link. The PPO policy is therefore trained to learn an
+intermediate strategy from the current radio state, timer state, and recent
+handover history.
+
+The implementation is intentionally trace-driven. It does not reproduce a
+complete physical layer, packet scheduler, or RRC protocol stack. Instead, it
+provides an auditable and reproducible environment for comparing decision
+policies under identical radio measurements. Consequently, the reference
+implementation is described throughout this report as a
+\emph{3GPP-inspired A3-based simulator}, rather than as a fully conformant 5G
+NR implementation.
+
+\subsection{Trace Dataset and Preprocessing}
+\label{subsec:trace-data}
+
+\subsubsection{Dataset composition}
+
+The current experiment uses the normalized UAV dataset stored in
+\texttt{data/uav\_processed}. It contains 120 paired trajectories, where each
+pair consists of one RSRP file and one SINR file. The dataset is balanced over
+four UAV speeds: 30, 50, 70, and 90~km/h, with 30 trajectories at each speed.
+Each trajectory contains 6000 samples collected at a fixed interval of 10~ms,
+corresponding to 60~s of simulated motion. Every sample contains measurements
+from 21 base stations.
+
+The raw files in \texttt{data/UAV\_sim} are converted without changing their
+measurement values. The conversion process pairs RSRP and SINR files, verifies
+that their sample indices and base-station columns match, and writes the common
+schema
+\texttt{sample,time\_ms,bs\_0,...,bs\_20}. The loader subsequently rejects
+missing pairs, non-finite values, inconsistent shapes, non-contiguous sample
+indices, and sampling intervals other than 10~ms.
+
+\subsubsection{Radio streams}
+
+One trajectory is represented internally by three explicit streams. The first
+is Layer-3-filtered RSRP, used exclusively for Event A3 detection. The second
+is the native SINR trace used for spectral-efficiency and rate estimation. The
+third is the SINR stream used as a radio-link-monitoring (RLM) proxy. In the
+current version, the rate and RLM streams contain the same unfiltered SINR
+samples, but they remain separate interfaces to allow a future RLM model to be
+introduced without modifying the rate model.
+
+Layer-3 filtering is applied independently to every base station using an
+exponential recursion. The configured coefficient is $K=16$, corresponding to
+a filter weight of $2^{-K/4}=1/16$. Filtering is applied only to RSRP; SINR is
+not resampled or shifted. This separation ensures that A3 uses a smoothed
+measurement while rate and timer events retain the native sampling instants.
+
+\subsubsection{Available and unavailable scenario information}
+
+The repository records the number of base stations, UAV speeds, sampling
+interval, trace duration, and all RSRP/SINR measurements required by the
+handover experiment. However, the normalized files do not themselves contain
+the UAV altitude, base-station coordinates and heights, antenna patterns,
+transmit powers, propagation-model configuration, or the route-generation
+procedure. These quantities should be recovered from the original UAV
+simulator configuration and reported separately before publication. The
+current results are valid as trace-level comparisons, but the missing scenario
+metadata limits independent reproduction of the radio traces themselves.
+
+\subsection{Construction of the 3GPP-Inspired Handover Simulator}
+\label{subsec:a3-simulator}
+
+\subsubsection{Event A3 detection}
+
+At each sample, the simulator identifies the non-serving base station with the
+largest filtered RSRP as the candidate target. This strongest-neighbor rule is
+a deterministic simulator choice; 3GPP measurement reporting can include
+multiple candidate cells. The A3 entering and leaving conditions follow the
+inequalities specified in TS~38.331~\cite{3gpp38331}:
+
+\begin{align}
+M_n + O_{fn}+O_{cn}-H_{\mathrm{ys}}
+    &> M_s+O_{fs}+O_{cs}+O_{\mathrm{off}}, \\
+M_n + O_{fn}+O_{cn}+H_{\mathrm{ys}}
+    &< M_s+O_{fs}+O_{cs}+O_{\mathrm{off}},
+\end{align}
+
+where $M_n$ and $M_s$ are the filtered target- and serving-cell RSRP values.
+The frequency- and cell-specific offsets are zero in the present experiment.
+The hysteresis and A3 offset are both 1~dB; hence, A3 entry requires the target
+RSRP to exceed the serving RSRP by more than 2~dB. State is preserved inside
+the hysteresis deadband.
+
+After A3 entry, the condition must remain valid for a time-to-trigger (TTT) of
+40~ms. Leaving the event before TTT completion resets the timer. If TTT
+completes, the current target is latched and a decision point is generated. The
+reference Always-HO policy immediately accepts every completed event. The
+action-controlled engine instead pauses protocol time until the PPO policy
+chooses HANDOVER or STAY. A STAY action suppresses the same serving-target
+event until A3 leaves or a different target becomes eligible, preventing the
+same rejected event from being offered repeatedly.
+
+\subsubsection{Handover preparation and execution}
+
+An accepted handover enters a 50~ms preparation phase followed by a 40~ms
+execution phase. The latched target cannot be silently changed by later
+measurements. At the end of execution, the handover is considered successful
+when the target-cell SINR exceeds the configured in-sync proxy. Otherwise, the
+attempt is counted as an HOF and the RLF recovery process begins. These fixed
+delays and the final SINR check are explicit simulation assumptions that
+approximate signalling, synchronization, and target access; the simulator does
+not model random access, T304, or individual RRC messages in full detail.
+
+\subsubsection{Radio link monitoring and recovery}
+
+RLM follows the N310/N311/T310 state progression of TS~38.331 and the relevant
+measurement concepts of TS~38.133~\cite{3gpp38133}. Ten consecutive
+out-of-sync indications start the 1000~ms T310 timer. Three consecutive
+in-sync indications stop T310, whereas expiry of T310 declares an RLF. A
+sample between the two thresholds produces neither indication. Because the
+dataset does not contain hypothetical PDCCH BLER or lower-layer indication
+periods, $Q_{\mathrm{out}}=-8$~dB and $Q_{\mathrm{in}}=-6$~dB are used as
+explicit SINR proxies. They must not be presented as standardized 3GPP SINR
+thresholds. RLF recovery is represented by a fixed 200~ms delay followed by a
+suitable-cell search; complete T311 and RRC re-establishment signalling are
+outside the present model.
+
+\subsubsection{Rate and event metrics}
+
+The trace does not provide scheduled packet throughput. The reported rate is
+therefore an estimated Shannon upper bound computed from the serving-cell SINR
+with a bandwidth of 10~MHz:
+
+\begin{equation}
+C[k] = B\log_2\!\left(1+10^{\mathrm{SINR}[k]/10}\right).
+\end{equation}
+
+Disconnected and interrupted intervals contribute zero delivered rate. The
+relative-rate metric divides the policy's mean estimated rate by an oracle
+upper bound that selects the maximum instantaneous SINR among all 21 base
+stations at every sample, without handover constraints or interruption. It is
+therefore a normalization reference, not a realizable handover policy.
+
+A PP event is defined as a successful $A\rightarrow B\rightarrow A$ return
+within 1~s. The PP rate is the number of PP returns divided by the number of
+successful handovers. HOF rate is the number of failed executions divided by
+the number of started handover executions. RLF is reported both as a count and
+as events per 100~s, since an RLF can occur even when no handover is active.
+
+\begin{table}[t]
+\centering
+\caption{Protocol and radio configuration used in the current experiment.}
+\label{tab:protocol-configuration}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Parameter & Value \\
+\midrule
+Radio sampling interval & 10~ms \\
+Carrier frequency & 2.1~GHz \\
+Bandwidth & 10~MHz \\
+Number of candidate BSs in each trace & 21 \\
+Layer-3 filter coefficient $K$ & 16 \\
+A3 hysteresis $H_{\mathrm{ys}}$ & 1~dB \\
+A3 offset $O_{\mathrm{off}}$ & 1~dB \\
+Time-to-trigger & 40~ms \\
+Handover preparation time & 50~ms \\
+Handover execution time & 40~ms \\
+$Q_{\mathrm{out}}$ SINR proxy & $-8$~dB \\
+$Q_{\mathrm{in}}$ SINR proxy & $-6$~dB \\
+N310 / N311 & 10 / 3 indications \\
+T310 & 1000~ms \\
+Simplified RLF recovery & 200~ms \\
+Ping-pong observation window & 1000~ms \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Construction of the Event-Triggered PPO System}
+\label{subsec:ppo-system}
+
+\subsubsection{Decision interface and SMDP formulation}
+
+The handover problem is formulated as a semi-Markov decision process (SMDP)
+because actions occur at irregularly spaced A3 opportunities rather than at
+every radio sample. A macro-step begins when A3 has remained valid for the
+complete TTT and ends at the next completed A3 event or the end of the trace.
+The environment advances all intermediate 10~ms protocol ticks internally.
+The uncontrollable prefix before the first A3 decision is retained for
+full-trace metrics but excluded from the PPO-controlled return.
+
+The action space is binary. HANDOVER accepts the latched A3 target and starts
+handover preparation, whereas STAY keeps the current serving cell and
+suppresses the current event. This design does not ask PPO to discover the A3
+trigger itself. PPO acts as an adaptive decision layer on top of a fixed and
+auditable mobility-event generator.
+
+\subsubsection{Causal observation design}
+
+The observation is a normalized 19-element vector constructed only from the
+current and previous samples. No future trace value is accessible to the
+agent. The features are organized into four groups:
+
+\begin{itemize}
+    \item \textbf{link utility:} serving spectral efficiency, target spectral
+    efficiency, and their difference;
+    \item \textbf{A3 persistence and dynamics:} current, mean, and minimum A3
+    margin during TTT, together with margin slope and standard deviation;
+    \item \textbf{link trend and failure risk:} serving and target SINR slopes,
+    serving-cell gap to $Q_{\mathrm{out}}$, target-cell gap to
+    $Q_{\mathrm{in}}$, N310 progress, T310 activity, and T310 progress;
+    \item \textbf{mobility history:} serving-cell residence time, time since
+    the last successful handover, an indicator that the target is the previous
+    serving cell, and the recent handover count.
+\end{itemize}
+
+The observation explicitly exposes both the benefit of moving to the target
+and the risk of delaying the handover. Previous-cell and recent-handover
+features provide direct evidence of possible ping-pong behavior, while timer
+features distinguish an ordinary A3 opportunity from an urgent link-failure
+situation.
+
+\subsubsection{Reward and physical-time discounting}
+
+The primitive reward is evaluated at every 10~ms tick. It is the normalized
+delivered-rate contribution minus event penalties for a newly declared RLF
+and a newly detected PP handover. The default rate scale is 100~Mbps, the RLF
+penalty is 5, and the PP penalty is 1. The macro reward assigned to an action
+is the sum of primitive rewards until the next decision. Handover interruption,
+HOF, disconnection, and recovery are also penalized indirectly through lost
+delivered rate; an HOF additionally enters RLF recovery.
+
+Macro-steps can have different physical durations $\tau_t$. To avoid treating
+a short transition and a long transition as equivalent, the discount and GAE
+factors are computed as $\gamma_t=\gamma_s^{\tau_t}$ and
+$\lambda_t=\lambda_s^{\tau_t}$, with per-second values
+$\gamma_s=0.99$ and $\lambda_s=0.95$. PPO otherwise uses the standard clipped
+probability-ratio objective of~\cite{schulman2017ppo}, a value loss, entropy
+regularization, normalized advantages, gradient clipping, and optional early
+stopping when the approximate KL divergence exceeds the configured target.
+
+\subsubsection{Actor-critic architecture and training process}
+
+The actor and critic share a multilayer perceptron with two 64-neuron hidden
+layers and Tanh activations. The 19-dimensional observation is mapped to a
+two-logit categorical policy head for STAY and HANDOVER and to a scalar value
+head. The network contains 5635 trainable parameters. Actions are sampled from
+the categorical distribution during training; deterministic evaluation uses
+the action with maximum probability.
+
+Rollouts may span multiple trajectories. Terminal masks prevent value and
+advantage information from leaking between trajectory resets. Each rollout is
+followed by ten epochs of minibatch optimization. The best checkpoint is
+selected exclusively using mean validation return. The held-out test split is
+evaluated only after checkpoint selection and never participates in model
+selection.
+
+\begin{table}[t]
+\centering
+\caption{PPO configuration used for the reported model.}
+\label{tab:ppo-configuration}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Hyperparameter & Value \\
+\midrule
+Hidden layers & $64,64$ with Tanh \\
+Trainable parameters & 5635 \\
+Optimizer & Adam \\
+Learning rate & $3\times10^{-4}$ \\
+Rollout capacity & 512 macro-steps \\
+Minibatch size & 64 \\
+Update epochs & 10 \\
+PPO clip range & 0.2 \\
+Value-loss coefficient & 0.5 \\
+Entropy coefficient & 0.01 \\
+Maximum gradient norm & 0.5 \\
+Per-second discount $\gamma_s$ & 0.99 \\
+Per-second GAE factor $\lambda_s$ & 0.95 \\
+Target approximate KL & 0.03 \\
+Training and split seed & 17 \\
+Training device & CUDA \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Experimental Setup}
+\label{subsec:experimental-setup}
+
+\subsubsection{Trajectory-level data split}
+
+Complete RSRP/SINR trajectory pairs are divided using a deterministic,
+speed-stratified 70/15/15 split with seed 17. For each speed, 21 trajectories
+are assigned to training, five to validation, and four to testing. The final
+split therefore contains 84 training, 20 validation, and 16 test trajectories.
+Splitting complete trajectories prevents samples from the same UAV route from
+appearing in more than one subset. Because every test trajectory lasts 60~s,
+the aggregate test duration is 960~s, with 240~s at each speed.
+
+\subsubsection{Training execution and checkpoint selection}
+
+The PPO run collected 100,000 SMDP macro-steps and completed 196 policy
+updates. Validation was performed approximately every 5000 collected
+macro-steps. Training ran on a CUDA device and required 3670.7~s, or
+approximately 61.2~min, according to the recorded training log. The best
+checkpoint was obtained at 45,056 macro-steps, where the validation mean
+return was $-2.069\pm9.466$ over 20 trajectories. At that checkpoint, the
+validation set produced an average estimated rate of 24.476~Mbps, 44 RLF
+events, 73 PP events, and a handover-action fraction of 71.8\%. Later updates
+did not improve validation return; therefore, the 45,056-step checkpoint was
+copied to the final model and used for held-out testing.
+
+\begin{table}[t]
+\centering
+\caption{Dataset split and recorded training execution.}
+\label{tab:dataset-training-setup}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Item & Value \\
+\midrule
+Total RSRP/SINR trace pairs & 120 \\
+UAV speeds & 30, 50, 70, 90~km/h \\
+Trajectories per speed & 30 \\
+Samples per trajectory & 6000 \\
+Physical duration per trajectory & 60~s \\
+Train/validation/test fraction & 70/15/15 \\
+Train/validation/test size & 84/20/16 \\
+Split per speed & 21/5/4 \\
+Held-out test duration & 960~s \\
+Target macro-steps & 100,000 \\
+Completed PPO updates & 196 \\
+Validation interval & approximately 5000 steps \\
+Selected checkpoint & 45,056 macro-steps \\
+Recorded training time & 3670.7~s (61.2~min) \\
+Execution device & CUDA \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Compared policies and fair benchmarking}
+
+Three deterministic policies are evaluated exactly once on each test
+trajectory:
+
+\begin{itemize}
+    \item \textbf{A3 Always-HO:} accepts every completed A3+TTT event. This
+    policy is tick-for-tick equivalent to the audited A3 reference engine;
+    \item \textbf{Always-Stay:} rejects every completed A3+TTT event. It is a
+    lower-complexity control showing the consequence of suppressing all
+    handovers;
+    \item \textbf{PPO:} loads the validation-selected checkpoint and selects
+    the maximum-probability action at every completed A3 event.
+\end{itemize}
+
+All policies use identical input traces, initial conditions, filtering,
+protocol timers, interruption rules, reward parameters, and trajectory order.
+The primary comparison is paired by trajectory against A3 Always-HO. Event
+counts are pooled before computing rates: HOF rate is total failures divided
+by total attempts, PP rate is total PP returns divided by total successful
+handovers, and RLF rate is $100$ times total RLF events divided by total
+simulated seconds. Mean controlled return begins at the first A3 decision,
+whereas rate, RLF, PP, and HOF cover the complete trace.
+
+\subsection{Experimental Results}
+\label{subsec:experimental-results}
+
+\subsubsection{Aggregate held-out test performance}
+
+Table~\ref{tab:aggregate-results} reports the aggregate performance on the 16
+held-out UAV trajectories. A3 Always-HO obtains the highest mean estimated rate
+at 21.902~Mbps. PPO achieves 21.627~Mbps, a reduction of only 0.274~Mbps or
+1.25\%. The mean relative rate decreases from 92.717\% to 91.386\%, equivalent
+to 1.331 percentage points.
+
+The small rate loss is accompanied by substantially fewer adverse mobility
+events. PPO reduces RLF from 60 to 43 events (28.3\%), PP handovers from 138 to
+42 (69.6\%), and HOF from 60 to 34 (43.3\%). The pooled RLF rate decreases from
+6.250 to 4.479 events per 100~s. The HOF rate decreases from 12.96\% to 10.93\%,
+and the PP rate decreases from 34.24\% to 15.16\%. PPO accepts 75.4\% of its
+available decision actions and improves mean controlled return by 11.148,
+from $-16.102$ to $-4.954$. Its connected-time fraction also increases from
+96.82\% to 97.81\%.
+
+\begin{table*}[t]
+\centering
+\caption{Aggregate results on the 16 held-out UAV trajectories.}
+\label{tab:aggregate-results}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lrrrrrrrrrr@{}}
+\toprule
+Policy & Rate & Relative & Connected & RLF & RLF/100~s & PP & HOF & HOF rate & HO action & Return \\
+ & (Mbps) & rate (\%) & time (\%) & & & & & (\%) & (\%) & \\
+\midrule
+A3 Always-HO & 21.902 & 92.717 & 96.821 & 60 & 6.250 & 138 & 60 & 12.959 & 100.0 & $-16.102$ \\
+Always-Stay & 18.179 & 75.640 & 98.042 & 94 & 9.792 & 0 & 0 & -- & 0.0 & $-20.336$ \\
+PPO & 21.627 & 91.386 & 97.808 & 43 & 4.479 & 42 & 34 & 10.932 & 75.4 & $-4.954$ \\
+\bottomrule
+\end{tabular}%
+}
+\end{table*}
+
+Always-Stay produces no handover failure or PP event by definition because it
+never starts a handover. However, it has the lowest estimated rate and the
+largest number of RLF events. Its 94 RLF events are 56.7\% more than A3
+Always-HO and more than twice the PPO count. This control demonstrates that the
+PPO improvement cannot be reproduced by simply suppressing all A3 events.
+
+\subsubsection{Performance by UAV speed}
+
+Table~\ref{tab:results-by-speed} compares PPO with A3 Always-HO at each UAV
+speed. The test set contains four trajectories and 240~s at every speed. PPO
+maintains an estimated-rate difference below 0.6~Mbps in all four groups while
+reducing RLF, PP, and HOF counts at every evaluated speed.
+
+At 30~km/h, PPO suppresses most unnecessary returns: PP events decrease from
+34 to one, while RLF decreases from seven to six. At 50~km/h, PPO halves the
+number of HOFs and reduces PP events from 38 to eight. The largest RLF
+improvement occurs at 70~km/h, where the count decreases from 24 to 12. At
+90~km/h, the improvements are smaller: RLF decreases from 15 to 14 and HOF
+from 15 to 12, although PP still decreases from 32 to 20. The 90~km/h group
+therefore indicates that the learned policy remains useful at high mobility
+but has less margin for suppressing failures than at the lower speeds.
+
+\begin{table*}[t]
+\centering
+\caption{Held-out results by UAV speed; each speed contains four 60-s trajectories.}
+\label{tab:results-by-speed}
+\begin{tabular}{@{}rrlrrrrrrr@{}}
+\toprule
+Speed & Test time & Policy & Rate & Relative & RLF & PP & HOF & HO action & Return \\
+(km/h) & (s) & & (Mbps) & rate (\%) & & & & (\%) & \\
+\midrule
+30 & 240 & A3 Always-HO & 23.076 & 94.777 & 7 & 34 & 7 & 100.0 & $-6.013$ \\
+30 & 240 & PPO          & 22.828 & 93.208 & 6 & 1  & 4 & 70.0  &  3.338 \\
+\midrule
+50 & 240 & A3 Always-HO & 19.903 & 92.659 & 14 & 38 & 14 & 100.0 & $-17.062$ \\
+50 & 240 & PPO          & 19.336 & 90.107 & 11 & 8  & 7  & 71.8  & $-6.152$ \\
+\midrule
+70 & 240 & A3 Always-HO & 21.220 & 92.504 & 24 & 34 & 24 & 100.0 & $-27.485$ \\
+70 & 240 & PPO          & 21.120 & 92.081 & 12 & 13 & 11 & 73.2  & $-7.295$ \\
+\midrule
+90 & 240 & A3 Always-HO & 23.409 & 90.930 & 15 & 32 & 15 & 100.0 & $-13.849$ \\
+90 & 240 & PPO          & 23.226 & 90.149 & 14 & 20 & 12 & 83.3  & $-9.708$ \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+The paired trajectory analysis supports the aggregate result. Compared with
+A3 Always-HO, PPO improves controlled return on 81.25\% of test trajectories
+and reduces PP events on 93.75\% of them. It produces a higher estimated rate
+on only 18.75\% of trajectories, which confirms that the trained objective
+primarily learns a reliability-stability trade-off rather than a rate-maximizing
+policy.
+
+\subsection{Interpretation, Limitations, and Required Follow-Up}
+\label{subsec:limitations}
+
+The present experiment provides evidence that an event-triggered PPO policy can
+reject a useful subset of completed A3 events. Under the evaluated traces, the
+selected policy retains approximately 98.75\% of the A3 baseline's estimated
+rate while materially reducing RLF, HOF, and PP events. The improvement is
+obtained without modifying A3 thresholds during an episode; adaptation occurs
+through the accept-or-stay decision at each completed A3 opportunity.
+
+The result should nevertheless be treated as a current project result rather
+than a final statistical claim. Training used one random seed and one
+validation-selected checkpoint, and the tables do not yet include confidence
+intervals across independent training runs. The following items should be
+completed before the final paper is submitted:
+
+\begin{itemize}
+    \item repeat training with multiple independent seeds and report mean,
+    standard deviation, and confidence intervals;
+    \item recover and document the UAV altitude, topology, antenna, transmit
+    power, channel, and trajectory-generation settings used to generate
+    \texttt{data/UAV\_sim};
+    \item distinguish consistently between estimated Shannon rate and measured
+    or scheduled throughput;
+    \item retain the terms ``SINR proxy'' and ``3GPP-inspired A3 simulator''
+    when describing RLM and protocol compliance;
+    \item investigate sensitivity to TTT, hysteresis, A3 offset, reward weights,
+    and PPO hyperparameters;
+    \item add ablation studies for the timer, trend, and handover-history
+    observation groups; and
+    \item evaluate generalization to unseen speeds, radio scenarios, or base
+    station deployments rather than only held-out trajectories from the same
+    generated dataset.
+\end{itemize}
+
+In its current form, the project already provides a complete reproducible
+pipeline from UAV trace conversion to A3 validation, event-triggered PPO
+training, validation-only checkpoint selection, and matched held-out
+benchmarking. The principal current conclusion is not that PPO universally
+dominates the A3 baseline, but that it achieves a favorable and interpretable
+reliability-rate trade-off in the evaluated UAV mobility scenarios.

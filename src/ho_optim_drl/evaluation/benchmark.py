@@ -59,6 +59,7 @@ def benchmark_policy(
         macro_steps = 0
         handover_actions = 0
         stay_actions = 0
+        wait_actions = 0
         controlled_duration_seconds = 0.0
 
         try:
@@ -101,6 +102,7 @@ def benchmark_policy(
                 macro_steps += 1
                 handover_actions += int(action is HandoverAction.HANDOVER)
                 stay_actions += int(action is HandoverAction.STAY)
+                wait_actions += int(action is HandoverAction.WAIT_50)
                 if terminated or truncated:
                     break
 
@@ -109,10 +111,12 @@ def benchmark_policy(
             raise RuntimeError("Benchmark environment did not retain its trace.")
         statistics = env.engine.get_statistics(trace)
         full_reward = uncontrolled_reward + controlled_reward
-        total_actions = handover_actions + stay_actions
+        total_actions = handover_actions + stay_actions + wait_actions
         total_time_s = float(statistics["total_time_s"])
-        connected_fraction = (
-            float(statistics["connected_time"]) / int(statistics["total_time"])
+        connected_percent = (
+            100
+            * float(statistics["connected_time"])
+            / int(statistics["total_time"])
             if int(statistics["total_time"]) > 0
             else 0.0
         )
@@ -126,14 +130,27 @@ def benchmark_policy(
                 "actionable": actionable,
                 "num_samples": int(statistics["num_samples"]),
                 "total_time_s": total_time_s,
-                "connected_fraction": connected_fraction,
+                "connected_percent": connected_percent,
                 "uncontrolled_duration_seconds": uncontrolled_duration_seconds,
                 "controlled_duration_seconds": controlled_duration_seconds,
                 "macro_steps": macro_steps,
                 "handover_actions": handover_actions,
                 "stay_actions": stay_actions,
-                "handover_fraction": (
-                    handover_actions / total_actions if total_actions else 0.0
+                "wait_actions": wait_actions,
+                "handover_action_percent": (
+                    100 * handover_actions / total_actions
+                    if total_actions
+                    else 0.0
+                ),
+                "stay_action_percent": (
+                    100 * stay_actions / total_actions
+                    if total_actions
+                    else 0.0
+                ),
+                "wait_action_percent": (
+                    100 * wait_actions / total_actions
+                    if total_actions
+                    else 0.0
                 ),
                 "controlled_reward_rate": controlled_reward.rate,
                 "controlled_reward_rlf": controlled_reward.rlf,
@@ -159,13 +176,18 @@ def benchmark_policy(
                 "ho_attempts": int(statistics["num_ho_exe_started"]),
                 "ho_successes": int(statistics["num_ho_exe_completed"]),
                 "handover_failures": int(statistics["num_hof"]),
-                "handover_failure_rate": float(statistics["hof_rate"]),
+                "handover_failure_percent": float(
+                    statistics["hof_percent"]
+                ),
                 "rlf_events": int(statistics["num_rlf"]),
-                "rlf_rate_per_100s": float(
-                    statistics["rlf_rate_per_100s"]
+                "rlf_recovery_time_s": float(
+                    statistics["rlf_recovery_time_s"]
+                ),
+                "rlf_time_percent": float(
+                    statistics["rlf_time_percent"]
                 ),
                 "ping_pong_events": int(statistics["num_pp"]),
-                "ping_pong_rate": float(statistics["pp_rate"]),
+                "ping_pong_percent": float(statistics["pp_percent"]),
             }
         )
 
@@ -198,6 +220,9 @@ def aggregate_benchmark_rows(
         successes = sum(int(row["ho_successes"]) for row in group)
         failures = sum(int(row["handover_failures"]) for row in group)
         rlf_events = sum(int(row["rlf_events"]) for row in group)
+        rlf_recovery_time_s = sum(
+            float(row["rlf_recovery_time_s"]) for row in group
+        )
         ping_pong_events = sum(
             int(row["ping_pong_events"]) for row in group
         )
@@ -205,7 +230,8 @@ def aggregate_benchmark_rows(
             int(row["handover_actions"]) for row in group
         )
         stay_actions = sum(int(row["stay_actions"]) for row in group)
-        total_actions = handover_actions + stay_actions
+        wait_actions = sum(int(row.get("wait_actions", 0)) for row in group)
+        total_actions = handover_actions + stay_actions + wait_actions
 
         result = {
             "policy": key[0],
@@ -241,29 +267,45 @@ def aggregate_benchmark_rows(
                 group,
                 "relative_rate_percent",
             ),
-            "mean_connected_fraction": _mean(
+            "mean_connected_percent": _mean(
                 group,
-                "connected_fraction",
+                "connected_percent",
             ),
             "mean_macro_steps": _mean(group, "macro_steps"),
             "handover_actions": handover_actions,
             "stay_actions": stay_actions,
-            "handover_fraction": (
-                handover_actions / total_actions if total_actions else 0.0
+            "wait_actions": wait_actions,
+            "handover_action_percent": (
+                100 * handover_actions / total_actions
+                if total_actions
+                else 0.0
+            ),
+            "stay_action_percent": (
+                100 * stay_actions / total_actions
+                if total_actions
+                else 0.0
+            ),
+            "wait_action_percent": (
+                100 * wait_actions / total_actions
+                if total_actions
+                else 0.0
             ),
             "ho_attempts": attempts,
             "ho_successes": successes,
             "handover_failures": failures,
-            "handover_failure_rate": (
-                failures / attempts if attempts else 0.0
+            "handover_failure_percent": (
+                100 * failures / attempts if attempts else 0.0
             ),
             "rlf_events": rlf_events,
-            "rlf_rate_per_100s": (
-                100 * rlf_events / duration_s if duration_s else 0.0
+            "rlf_recovery_time_s": rlf_recovery_time_s,
+            "rlf_time_percent": (
+                100 * rlf_recovery_time_s / duration_s
+                if duration_s
+                else 0.0
             ),
             "ping_pong_events": ping_pong_events,
-            "ping_pong_rate": (
-                ping_pong_events / successes if successes else 0.0
+            "ping_pong_percent": (
+                100 * ping_pong_events / successes if successes else 0.0
             ),
         }
         if by_speed:

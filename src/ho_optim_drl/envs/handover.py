@@ -33,7 +33,7 @@ from ho_optim_drl.smdp import (
 
 class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
     """
-    Binary STAY/HANDOVER environment evaluated only at completed A3 events.
+    STAY/HANDOVER/WAIT_50 environment evaluated at completed A3 events.
 
     A reset advances through the uncontrollable trace prefix to the first A3
     decision. A step executes one action and advances internally to the next
@@ -54,6 +54,9 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
         gamma_per_second: float = 0.99,
     ) -> None:
         super().__init__()
+        if protocol_config is None and data_dir is not None:
+            from ho_optim_drl.data.project import load_protocol_config
+            protocol_config = load_protocol_config(data_dir)
         self.config = copy.deepcopy(protocol_config or Config())
         self.config.validate()
 

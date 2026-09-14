@@ -87,8 +87,9 @@ The one-second window is an evaluation choice, not a universal 3GPP timer.
 
 ### Failure metrics
 
-- `HOF rate = failed HO executions / started HO executions`
-- `RLF rate = RLF events / 100 seconds of simulated trace`
+- `HOF (%) = 100 * failed HO executions / started HO executions`
+- `RLF time (%) = 100 * RLF-recovery time / simulated trace duration`
+- `PP (%) = 100 * ping-pong events / successful HO executions`
 
 RLF is intentionally not divided by the number of handovers because RLF can
 occur without an active handover.

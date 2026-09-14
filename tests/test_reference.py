@@ -67,6 +67,17 @@ class RadioLinkMonitoringTests(unittest.TestCase):
 
 
 class HandoverMetricTests(unittest.TestCase):
+    def test_rlf_metric_is_recovery_time_percentage(self) -> None:
+        env = A3ReferenceSimulator(Config())
+        env.bs_idxs = [0, 0, np.nan, np.nan]
+        env.rlfr_idxs = [False, True, True, False]
+
+        metrics = env._event_metrics()
+
+        self.assertEqual(metrics["rlf_recovery_samples"], 2)
+        self.assertAlmostEqual(metrics["rlf_recovery_time_s"], 0.02)
+        self.assertAlmostEqual(metrics["rlf_time_percent"], 50.0)
+
     def test_ping_pong_requires_a_b_a(self) -> None:
         env = A3ReferenceSimulator(Config())
 
