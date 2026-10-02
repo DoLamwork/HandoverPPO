@@ -98,68 +98,6 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(first_decision_tic, 4)
         self.assertEqual(engine.decision_point.tic, 13)
 
-    def test_wait_50_reoffers_the_same_valid_a3_event_after_five_ticks(
-        self,
-    ) -> None:
-        rsrp = np.vstack(
-            (
-                np.full(14, -80.0),
-                np.full(14, -77.0),
-            )
-        )
-        engine = HandoverEngine(Config())
-        engine.reset(_trace(rsrp, _constant_sinr(2, 14)))
-
-        for _ in range(5):
-            engine.advance_one_tick()
-        first_decision = engine.decision_point
-        engine.wait_50()
-
-        results = [engine.advance_one_tick() for _ in range(5)]
-
-        self.assertTrue(
-            all(
-                result.snapshot.phase is not ProtocolPhase.DECISION
-                for result in results[:-1]
-            )
-        )
-        self.assertEqual(results[-1].snapshot.phase, ProtocolPhase.DECISION)
-        self.assertEqual(first_decision.tic, 4)
-        self.assertEqual(engine.decision_point.tic, 9)
-        self.assertEqual(
-            engine.decision_point.a3_start_tic,
-            first_decision.a3_start_tic,
-        )
-        self.assertEqual(
-            engine.decision_point.target_cell,
-            first_decision.target_cell,
-        )
-        self.assertEqual(engine.successful_ho_history, [])
-
-    def test_wait_50_is_cancelled_when_a3_leaves_before_timeout(self) -> None:
-        rsrp = np.vstack(
-            (
-                np.full(16, -80.0),
-                np.array([-77.0] * 8 + [-81.0] + [-77.0] * 7),
-            )
-        )
-        engine = HandoverEngine(Config())
-        engine.reset(_trace(rsrp, _constant_sinr(2, 16)))
-
-        for _ in range(5):
-            engine.advance_one_tick()
-        engine.wait_50()
-
-        for _ in range(8):
-            tick = engine.advance_one_tick()
-            self.assertNotEqual(tick.snapshot.phase, ProtocolPhase.DECISION)
-        tick = engine.advance_one_tick()
-
-        self.assertEqual(tick.snapshot.phase, ProtocolPhase.DECISION)
-        self.assertEqual(engine.decision_point.tic, 13)
-        self.assertEqual(engine.decision_point.a3_start_tic, 9)
-
-
 class HandoverTests(unittest.TestCase):
     def test_handover_uses_latched_target_when_strongest_cell_changes(self) -> None:
         config = Config()

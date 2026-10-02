@@ -1,5 +1,12 @@
 # Trace data
 
+The legacy 1,060-trajectory UAV dataset carries a compact, versionable
+`dataset_provenance.json` beside both its raw and processed CSV files. The file
+records the seven-site/21-sector topology, file contract, inventory audit, and
+the distinction between the historical 4 GHz/20 MHz trace-generation settings
+and the deliberately retained 2.1 GHz/10 MHz handover runtime settings. It is
+descriptive provenance and is not automatically loaded as protocol config.
+
 The runtime reads the RSRP and SINR traces in `processed` from CSV files.
 Each file has the following row-oriented schema:
 

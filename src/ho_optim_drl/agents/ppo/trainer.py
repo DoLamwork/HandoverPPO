@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 import csv
 import json
 import math
@@ -34,6 +34,7 @@ class PPOUpdateMetrics:
     policy_loss: float
     value_loss: float
     entropy: float
+    normalized_entropy: float
     approximate_kl: float
     clip_fraction: float
     gradient_norm: float
@@ -65,7 +66,6 @@ class EvaluationMetrics:
     mean_macro_steps: float
     handover_fraction: float
     stay_fraction: float
-    wait_fraction: float
     mean_estimated_rate_mbps: float
     mean_max_estimated_rate_mbps: float
     mean_relative_rate_percent: float
@@ -80,6 +80,15 @@ class EvaluationMetrics:
     rlf_time_percent: float
     total_ping_pong: int
     ping_pong_percent: float
+    mean_relative_rate_percent_by_speed: dict[str, float] = field(
+        default_factory=dict
+    )
+    p10_relative_rate_percent: float = 0.0
+    p10_relative_rate_percent_by_speed: dict[str, float] = field(
+        default_factory=dict
+    )
+    action_counts: dict[str, int] = field(default_factory=dict)
+    action_fractions: dict[str, float] = field(default_factory=dict)
 
 
 class ValidationCheckpointManager:
@@ -99,8 +108,14 @@ class ValidationCheckpointManager:
         *,
         reference_rate_mbps: float,
         reference_rates_by_speed: dict[int | str, float] | None = None,
+        reference_relative_rate_percent: float | None = None,
+        reference_relative_rates_by_speed: (
+            dict[int | str, float] | None
+        ) = None,
         qos_rate_ratio: float = 0.98,
         qos_rate_ratio_per_speed: float | None = None,
+        qos_relative_rate_ratio: float | None = None,
+        qos_relative_rate_ratio_per_speed: float | None = None,
         checkpoint_extra: dict[str, Any] | None = None,
         reference_label: str = "3gpp_always_ho",
     ) -> None:
@@ -112,10 +127,26 @@ class ValidationCheckpointManager:
             qos_rate_ratio_per_speed = qos_rate_ratio
         if not 0 < qos_rate_ratio_per_speed <= 1:
             raise ValueError("qos_rate_ratio_per_speed must be in (0, 1].")
+        if qos_relative_rate_ratio is None:
+            qos_relative_rate_ratio = qos_rate_ratio
+        if qos_relative_rate_ratio_per_speed is None:
+            qos_relative_rate_ratio_per_speed = qos_rate_ratio_per_speed
+        if not 0 < qos_relative_rate_ratio <= 1:
+            raise ValueError("qos_relative_rate_ratio must be in (0, 1].")
+        if not 0 < qos_relative_rate_ratio_per_speed <= 1:
+            raise ValueError(
+                "qos_relative_rate_ratio_per_speed must be in (0, 1]."
+            )
 
         normalized_speed_rates = {
             str(speed): float(rate)
             for speed, rate in (reference_rates_by_speed or {}).items()
+        }
+        normalized_relative_rates = {
+            str(speed): float(rate)
+            for speed, rate in (
+                reference_relative_rates_by_speed or {}
+            ).items()
         }
         if any(
             not math.isfinite(rate) or rate <= 0
@@ -123,6 +154,21 @@ class ValidationCheckpointManager:
         ):
             raise ValueError(
                 "Every reference rate by speed must be positive and finite."
+            )
+        if reference_relative_rate_percent is not None and (
+            not math.isfinite(reference_relative_rate_percent)
+            or reference_relative_rate_percent <= 0
+        ):
+            raise ValueError(
+                "reference_relative_rate_percent must be positive and finite."
+            )
+        if any(
+            not math.isfinite(rate) or rate <= 0
+            for rate in normalized_relative_rates.values()
+        ):
+            raise ValueError(
+                "Every relative-rate reference by speed must be positive "
+                "and finite."
             )
 
         self.output_dir = os.path.abspath(os.fspath(output_dir))
@@ -166,9 +212,19 @@ class ValidationCheckpointManager:
             "label": reference_label,
             "mean_estimated_rate_mbps": float(reference_rate_mbps),
             "mean_estimated_rate_mbps_by_speed": normalized_speed_rates,
+            "mean_relative_rate_percent": (
+                None
+                if reference_relative_rate_percent is None
+                else float(reference_relative_rate_percent)
+            ),
+            "mean_relative_rate_percent_by_speed": normalized_relative_rates,
         }
         self.qos_rate_ratio = float(qos_rate_ratio)
         self.qos_rate_ratio_per_speed = float(qos_rate_ratio_per_speed)
+        self.qos_relative_rate_ratio = float(qos_relative_rate_ratio)
+        self.qos_relative_rate_ratio_per_speed = float(
+            qos_relative_rate_ratio_per_speed
+        )
         self.checkpoint_extra = dict(checkpoint_extra or {})
         self.records: list[dict[str, Any]] = []
         os.makedirs(self.all_dir, exist_ok=True)
@@ -187,13 +243,14 @@ class ValidationCheckpointManager:
             evaluation.mean_estimated_rate_mbps
             / self.reference["mean_estimated_rate_mbps"]
         )
-        speed_ratios = self._speed_rate_ratios(
-            evaluation.mean_estimated_rate_mbps_by_speed
+        speed_ratios = self._speed_ratios(
+            evaluation.mean_estimated_rate_mbps_by_speed,
+            self.reference["mean_estimated_rate_mbps_by_speed"],
         )
         reference_speed_count = len(
             self.reference["mean_estimated_rate_mbps_by_speed"]
         )
-        qos_feasible = (
+        rate_feasible = (
             aggregate_rate_ratio >= self.qos_rate_ratio
             and all(
                 ratio >= self.qos_rate_ratio_per_speed
@@ -202,7 +259,32 @@ class ValidationCheckpointManager:
             and len(speed_ratios) == reference_speed_count
         )
         if reference_speed_count == 0:
-            qos_feasible = aggregate_rate_ratio >= self.qos_rate_ratio
+            rate_feasible = aggregate_rate_ratio >= self.qos_rate_ratio
+
+        relative_reference = self.reference["mean_relative_rate_percent"]
+        relative_speed_reference = self.reference[
+            "mean_relative_rate_percent_by_speed"
+        ]
+        aggregate_relative_ratio = (
+            evaluation.mean_relative_rate_percent / relative_reference
+            if relative_reference is not None
+            else None
+        )
+        relative_speed_ratios = self._speed_ratios(
+            evaluation.mean_relative_rate_percent_by_speed,
+            relative_speed_reference,
+        )
+        relative_feasible = True
+        if aggregate_relative_ratio is not None:
+            relative_feasible = (
+                aggregate_relative_ratio >= self.qos_relative_rate_ratio
+                and all(
+                    ratio >= self.qos_relative_rate_ratio_per_speed
+                    for ratio in relative_speed_ratios.values()
+                )
+                and len(relative_speed_ratios) == len(relative_speed_reference)
+            )
+        qos_feasible = rate_feasible and relative_feasible
 
         record: dict[str, Any] = {
             "macro_steps": agent.total_macro_steps,
@@ -211,6 +293,8 @@ class ValidationCheckpointManager:
             "qos_feasible": qos_feasible,
             "aggregate_rate_ratio_to_3gpp": aggregate_rate_ratio,
             "rate_ratio_to_3gpp_by_speed": speed_ratios,
+            "aggregate_relative_rate_ratio_to_3gpp": aggregate_relative_ratio,
+            "relative_rate_ratio_to_3gpp_by_speed": relative_speed_ratios,
             "validation": metrics,
             "is_best_return": False,
             "is_best_qos": False,
@@ -229,8 +313,18 @@ class ValidationCheckpointManager:
                     "qos_rate_ratio_per_speed": (
                         self.qos_rate_ratio_per_speed
                     ),
+                    "qos_relative_rate_ratio": self.qos_relative_rate_ratio,
+                    "qos_relative_rate_ratio_per_speed": (
+                        self.qos_relative_rate_ratio_per_speed
+                    ),
                     "aggregate_rate_ratio_to_3gpp": aggregate_rate_ratio,
                     "rate_ratio_to_3gpp_by_speed": speed_ratios,
+                    "aggregate_relative_rate_ratio_to_3gpp": (
+                        aggregate_relative_ratio
+                    ),
+                    "relative_rate_ratio_to_3gpp_by_speed": (
+                        relative_speed_ratios
+                    ),
                 },
             },
         )
@@ -242,6 +336,8 @@ class ValidationCheckpointManager:
             "qos_feasible": qos_feasible,
             "aggregate_rate_ratio_to_3gpp": aggregate_rate_ratio,
             "rate_ratio_to_3gpp_by_speed": speed_ratios,
+            "aggregate_relative_rate_ratio_to_3gpp": aggregate_relative_ratio,
+            "relative_rate_ratio_to_3gpp_by_speed": relative_speed_ratios,
             "is_best_return": record["is_best_return"],
             "is_best_qos": record["is_best_qos"],
             "is_best_rlf": record["is_best_rlf"],
@@ -254,6 +350,10 @@ class ValidationCheckpointManager:
             "selection_policy": {
                 "qos_rate_ratio": self.qos_rate_ratio,
                 "qos_rate_ratio_per_speed": self.qos_rate_ratio_per_speed,
+                "qos_relative_rate_ratio": self.qos_relative_rate_ratio,
+                "qos_relative_rate_ratio_per_speed": (
+                    self.qos_relative_rate_ratio_per_speed
+                ),
                 "best_qos_priority": [
                     "rlf_time_percent",
                     "handover_failure_percent",
@@ -295,16 +395,17 @@ class ValidationCheckpointManager:
             "pareto_csv": self.pareto_csv_path,
         }
 
-    def _speed_rate_ratios(
-        self,
-        rates_by_speed: dict[str, float],
+    @staticmethod
+    def _speed_ratios(
+        values_by_speed: dict[str, float],
+        references_by_speed: dict[str, float],
     ) -> dict[str, float]:
         ratios: dict[str, float] = {}
-        for speed, reference_rate in self.reference[
-            "mean_estimated_rate_mbps_by_speed"
-        ].items():
-            if speed in rates_by_speed:
-                ratios[speed] = float(rates_by_speed[speed]) / reference_rate
+        for speed, reference_value in references_by_speed.items():
+            if speed in values_by_speed:
+                ratios[speed] = (
+                    float(values_by_speed[speed]) / reference_value
+                )
         return ratios
 
     def _refresh_selections(self) -> None:
@@ -441,6 +542,8 @@ class ValidationCheckpointManager:
             "qos_feasible",
             "aggregate_rate_ratio_to_3gpp",
             "rate_ratio_to_3gpp_by_speed",
+            "aggregate_relative_rate_ratio_to_3gpp",
+            "relative_rate_ratio_to_3gpp_by_speed",
             "is_best_return",
             "is_best_qos",
             "is_best_rlf",
@@ -460,12 +563,17 @@ class ValidationCheckpointManager:
                     row["rate_ratio_to_3gpp_by_speed"],
                     sort_keys=True,
                 )
+                row["relative_rate_ratio_to_3gpp_by_speed"] = json.dumps(
+                    row["relative_rate_ratio_to_3gpp_by_speed"],
+                    sort_keys=True,
+                )
                 row.update(record["validation"])
-                if isinstance(row["mean_estimated_rate_mbps_by_speed"], dict):
-                    row["mean_estimated_rate_mbps_by_speed"] = json.dumps(
-                        row["mean_estimated_rate_mbps_by_speed"],
-                        sort_keys=True,
-                    )
+                for field_name in metric_fields:
+                    if isinstance(row[field_name], dict):
+                        row[field_name] = json.dumps(
+                            row[field_name],
+                            sort_keys=True,
+                        )
                 writer.writerow(row)
 
 
@@ -478,6 +586,12 @@ class SMDPPPO:
         action_size: int,
         config: SMDPPPOConfig | None = None,
     ) -> None:
+        # Gymnasium's Discrete.n may be a numpy.int64.  Normalize model
+        # dimensions before they reach checkpoint metadata so PyTorch's safe
+        # weights-only loader does not need NumPy scalar reconstruction for
+        # checkpoints created by current code.
+        observation_size = int(observation_size)
+        action_size = int(action_size)
         self.config = config or SMDPPPOConfig()
         self.config.validate()
         self.device = self._resolve_device(self.config.device)
@@ -498,12 +612,14 @@ class SMDPPPO:
         self.update_count = 0
         self._collector_env_id: int | None = None
         self._collector_observation: np.ndarray | None = None
+        self._last_collection_metrics: dict[str, Any] = {}
 
     def predict(
         self,
         observation: np.ndarray,
         *,
         deterministic: bool = True,
+        action_mask: np.ndarray | None = None,
     ) -> int:
         """Choose an action for evaluation or external use."""
         self.model.eval()
@@ -511,6 +627,7 @@ class SMDPPPO:
             observation,
             device=self.device,
             deterministic=deterministic,
+            action_mask=action_mask,
         )
         return action
 
@@ -544,8 +661,23 @@ class SMDPPPO:
         buffer = SMDPRolloutBuffer(
             capacity,
             tuple(env.observation_space.shape),
+            self.model.action_size,
         )
         completed_episodes: list[EpisodeRecord] = []
+        primitive_ticks = 0
+        simulated_seconds = 0.0
+        action_counts: Counter[str] = Counter()
+        speed_counts: Counter[str] = Counter()
+        raw_reward_totals: Counter[str] = Counter()
+        discounted_reward_totals: Counter[str] = Counter()
+        durations_by_action: dict[str, list[float]] = {}
+        valid_action_counts: list[int] = []
+        action_probabilities: dict[str, list[float]] = {
+            action.name: []
+            for action in list(HandoverAction)[: self.model.action_size]
+        }
+        mask_availability: Counter[str] = Counter()
+        conditional_ho_entropies: list[float] = []
         self.model.eval()
         self._emit(
             progress_callback,
@@ -559,10 +691,17 @@ class SMDPPPO:
 
         while not buffer.full:
             observation = self._collector_observation
-            action, log_probability, value = self.model.act(
+            action_mask = env.action_mask()
+            (
+                action,
+                log_probability,
+                value,
+                probabilities,
+            ) = self.model.act_with_probabilities(
                 observation,
                 device=self.device,
                 deterministic=False,
+                action_mask=action_mask,
             )
             (
                 next_observation,
@@ -571,6 +710,38 @@ class SMDPPPO:
                 truncated,
                 info,
             ) = env.step(action)
+            action_name = HandoverAction(action).name
+            action_counts[action_name] += 1
+            speed_counts[str(info.get("speed_kmh", "unknown"))] += 1
+            primitive_ticks += int(info["duration_ticks"])
+            duration_seconds = float(info["duration_seconds"])
+            simulated_seconds += duration_seconds
+            durations_by_action.setdefault(action_name, []).append(
+                duration_seconds
+            )
+            action_names = list(action_probabilities)
+            for index, name in enumerate(action_names):
+                action_probabilities[name].append(float(probabilities[index]))
+                mask_availability[name] += int(action_mask[index])
+            if action != int(HandoverAction.STAY):
+                candidate_probabilities = probabilities[1:][action_mask[1:]]
+                candidate_mass = float(candidate_probabilities.sum())
+                if candidate_mass > 0 and len(candidate_probabilities) > 1:
+                    conditional = candidate_probabilities / candidate_mass
+                    conditional_ho_entropies.append(
+                        float(
+                            -np.sum(
+                                conditional
+                                * np.log(np.maximum(conditional, 1e-12))
+                            )
+                            / np.log(len(conditional))
+                        )
+                    )
+            valid_action_counts.append(int(np.count_nonzero(action_mask)))
+            for component, value_item in info["reward"].items():
+                raw_reward_totals[component] += float(value_item)
+            for component, value_item in info["discounted_reward"].items():
+                discounted_reward_totals[component] += float(value_item)
 
             next_value = (
                 0.0
@@ -592,6 +763,7 @@ class SMDPPPO:
                 terminated=terminated,
                 truncated=truncated,
                 trace_id=str(info["trace_id"]),
+                action_mask=action_mask,
             )
             self.total_macro_steps += 1
 
@@ -623,6 +795,43 @@ class SMDPPPO:
         buffer.compute_returns_and_advantages(
             self.config.lambda_per_second
         )
+        self._last_collection_metrics = {
+            "primitive_ticks": primitive_ticks,
+            "simulated_seconds": simulated_seconds,
+            "action_counts": dict(sorted(action_counts.items())),
+            "macro_steps_by_speed": dict(sorted(speed_counts.items())),
+            "mean_valid_actions": float(np.mean(valid_action_counts)),
+            "mask_availability_fraction": {
+                name: mask_availability[name] / capacity
+                for name in action_probabilities
+            },
+            "action_probability_summary": {
+                name: {
+                    "mean": float(np.mean(values)),
+                    "p10": float(np.percentile(values, 10)),
+                    "p50": float(np.percentile(values, 50)),
+                    "p90": float(np.percentile(values, 90)),
+                }
+                for name, values in action_probabilities.items()
+            },
+            "conditional_handover_candidate_entropy": (
+                float(np.mean(conditional_ho_entropies))
+                if conditional_ho_entropies
+                else None
+            ),
+            "raw_reward_totals": dict(sorted(raw_reward_totals.items())),
+            "discounted_reward_totals": dict(
+                sorted(discounted_reward_totals.items())
+            ),
+            "duration_seconds_by_action": {
+                name: {
+                    "p50": float(np.percentile(values, 50)),
+                    "p90": float(np.percentile(values, 90)),
+                    "p99": float(np.percentile(values, 99)),
+                }
+                for name, values in sorted(durations_by_action.items())
+            },
+        }
         return buffer, completed_episodes
 
     def update(self, buffer: SMDPRolloutBuffer) -> PPOUpdateMetrics:
@@ -636,6 +845,7 @@ class SMDPPPO:
             "policy_loss": [],
             "value_loss": [],
             "entropy": [],
+            "normalized_entropy": [],
             "approximate_kl": [],
             "clip_fraction": [],
             "gradient_norm": [],
@@ -649,12 +859,37 @@ class SMDPPPO:
             for start in range(0, buffer.size, batch_size):
                 indices = permutation[start : start + batch_size]
                 distribution, values = self.model.distribution_and_value(
-                    tensors.observations[indices]
+                    tensors.observations[indices],
+                    (
+                        None
+                        if tensors.action_masks is None
+                        else tensors.action_masks[indices]
+                    ),
                 )
                 new_log_probabilities = distribution.log_prob(
                     tensors.actions[indices]
                 )
-                entropy = distribution.entropy().mean()
+                entropy_values = distribution.entropy()
+                entropy = entropy_values.mean()
+                if tensors.action_masks is None:
+                    valid_counts = torch.full_like(
+                        entropy_values,
+                        float(self.model.action_size),
+                    )
+                else:
+                    valid_counts = tensors.action_masks[indices].sum(
+                        dim=-1
+                    ).to(dtype=entropy_values.dtype)
+                entropy_denominator = torch.log(valid_counts)
+                normalizable = entropy_denominator > 0
+                normalized_entropy = (
+                    (
+                        entropy_values[normalizable]
+                        / entropy_denominator[normalizable]
+                    ).mean()
+                    if torch.any(normalizable)
+                    else torch.zeros((), device=self.device)
+                )
                 log_ratio = (
                     new_log_probabilities
                     - tensors.old_log_probabilities[indices]
@@ -702,6 +937,9 @@ class SMDPPPO:
                 metric_values["policy_loss"].append(float(policy_loss.item()))
                 metric_values["value_loss"].append(float(value_loss.item()))
                 metric_values["entropy"].append(float(entropy.item()))
+                metric_values["normalized_entropy"].append(
+                    float(normalized_entropy.item())
+                )
                 metric_values["approximate_kl"].append(
                     float(approximate_kl.item())
                 )
@@ -732,6 +970,9 @@ class SMDPPPO:
             policy_loss=self._mean(metric_values["policy_loss"]),
             value_loss=self._mean(metric_values["value_loss"]),
             entropy=self._mean(metric_values["entropy"]),
+            normalized_entropy=self._mean(
+                metric_values["normalized_entropy"]
+            ),
             approximate_kl=self._mean(metric_values["approximate_kl"]),
             clip_fraction=self._mean(metric_values["clip_fraction"]),
             gradient_norm=self._mean(metric_values["gradient_norm"]),
@@ -749,6 +990,7 @@ class SMDPPPO:
         """Evaluate each trajectory at most once in stable index order."""
         if max_episodes is not None and max_episodes <= 0:
             raise ValueError("max_episodes must be positive or None.")
+        self._validate_environment(env)
 
         # Evaluation mutates ``env``.  It invalidates the cached observation
         # only when this is the same environment used by the active collector.
@@ -765,10 +1007,11 @@ class SMDPPPO:
         max_estimated_rates: list[float] = []
         relative_rates: list[float] = []
         rates_by_speed: dict[str, list[float]] = {}
+        relative_rates_by_speed: dict[str, list[float]] = {}
         total_actions = 0
+        evaluation_action_counts: Counter[str] = Counter()
         handover_actions = 0
         stay_actions = 0
-        wait_actions = 0
         total_samples = 0
         total_connected_samples = 0
         total_time_seconds = 0.0
@@ -793,6 +1036,7 @@ class SMDPPPO:
                 continue
 
             episode_return = 0.0
+            episode_discount = 1.0
             rate_reward = 0.0
             rlf_penalty = 0.0
             ping_pong_penalty = 0.0
@@ -801,6 +1045,7 @@ class SMDPPPO:
                 action = self.predict(
                     observation,
                     deterministic=deterministic,
+                    action_mask=env.action_mask(),
                 )
                 (
                     observation,
@@ -809,15 +1054,16 @@ class SMDPPPO:
                     truncated,
                     info,
                 ) = env.step(action)
-                episode_return += reward
+                episode_return += episode_discount * reward
+                episode_discount *= float(info["discount"])
                 rate_reward += float(info["reward"]["rate"])
                 rlf_penalty += float(info["reward"]["rlf"])
                 ping_pong_penalty += float(info["reward"]["ping_pong"])
                 episode_steps += 1
                 total_actions += 1
-                handover_actions += int(action == HandoverAction.HANDOVER)
+                evaluation_action_counts[HandoverAction(action).name] += 1
+                handover_actions += int(action != HandoverAction.STAY)
                 stay_actions += int(action == HandoverAction.STAY)
-                wait_actions += int(action == HandoverAction.WAIT_50)
                 if terminated or truncated:
                     metrics = env.engine.get_statistics(env.current_trace)
                     estimated_rate = float(metrics["estimated_rate_mbps"])
@@ -826,15 +1072,19 @@ class SMDPPPO:
                     )
                     estimated_rates.append(estimated_rate)
                     max_estimated_rates.append(max_estimated_rate)
-                    relative_rates.append(
+                    relative_rate = (
                         100 * estimated_rate / max_estimated_rate
                         if max_estimated_rate > 0
                         else 0.0
                     )
+                    relative_rates.append(relative_rate)
                     if "speed_kmh" in info:
                         speed = str(info["speed_kmh"])
                         rates_by_speed.setdefault(speed, []).append(
                             estimated_rate
+                        )
+                        relative_rates_by_speed.setdefault(speed, []).append(
+                            relative_rate
                         )
                     total_samples += int(metrics["total_time"])
                     total_connected_samples += int(metrics["connected_time"])
@@ -879,9 +1129,6 @@ class SMDPPPO:
             stay_fraction=(
                 stay_actions / total_actions if total_actions else 0.0
             ),
-            wait_fraction=(
-                wait_actions / total_actions if total_actions else 0.0
-            ),
             mean_estimated_rate_mbps=float(np.mean(estimated_rates)),
             mean_max_estimated_rate_mbps=float(
                 np.mean(max_estimated_rates)
@@ -919,6 +1166,29 @@ class SMDPPPO:
                 if total_handover_successes
                 else 0.0
             ),
+            mean_relative_rate_percent_by_speed={
+                speed: float(np.mean(values))
+                for speed, values in sorted(relative_rates_by_speed.items())
+            },
+            p10_relative_rate_percent=float(
+                np.percentile(relative_rates, 10)
+            ),
+            p10_relative_rate_percent_by_speed={
+                speed: float(np.percentile(values, 10))
+                for speed, values in sorted(relative_rates_by_speed.items())
+            },
+            action_counts={
+                action.name: int(evaluation_action_counts[action.name])
+                for action in list(HandoverAction)[: self.model.action_size]
+            },
+            action_fractions={
+                action.name: (
+                    evaluation_action_counts[action.name] / total_actions
+                    if total_actions
+                    else 0.0
+                )
+                for action in list(HandoverAction)[: self.model.action_size]
+            },
         )
 
     def train(
@@ -981,6 +1251,7 @@ class SMDPPPO:
                     sorted(Counter(trace_ids).items())
                 ),
                 "training_trace_segments": self._trace_segments(trace_ids),
+                "rollout_diagnostics": dict(self._last_collection_metrics),
                 "mean_training_episode_return": (
                     float(np.mean([episode.episode_return for episode in episodes]))
                     if episodes
@@ -1103,6 +1374,19 @@ class SMDPPPO:
                 "optimizer_state": self.optimizer.state_dict(),
                 "total_macro_steps": self.total_macro_steps,
                 "update_count": self.update_count,
+                "training_state": self._capture_rng_state(),
+                "checkpoint_contract": {
+                    "save_boundary": "ppo_update_boundary",
+                    "resume_capability": (
+                        "optimizer_and_rng_with_episode_restart"
+                    ),
+                    "exact_resume": False,
+                    "missing_state": [
+                        "environment_protocol_state",
+                        "collector_observation_and_trace_cursor",
+                        "checkpoint_manager_records_and_schedule",
+                    ],
+                },
                 "extra": extra or {},
             },
             path,
@@ -1115,11 +1399,7 @@ class SMDPPPO:
         load_optimizer: bool = True,
     ) -> dict[str, Any]:
         """Load a compatible checkpoint and return its extra metadata."""
-        checkpoint = torch.load(
-            os.fspath(path),
-            map_location=self.device,
-            weights_only=True,
-        )
+        checkpoint = self._load_checkpoint_payload(path, self.device)
         if checkpoint.get("format_version") != 1:
             raise ValueError("Unsupported PPO checkpoint format.")
         self.model.load_state_dict(checkpoint["model_state"])
@@ -1127,6 +1407,8 @@ class SMDPPPO:
             self.optimizer.load_state_dict(checkpoint["optimizer_state"])
         self.total_macro_steps = int(checkpoint["total_macro_steps"])
         self.update_count = int(checkpoint["update_count"])
+        if load_optimizer and "training_state" in checkpoint:
+            self._restore_rng_state(checkpoint["training_state"])
         self._collector_env_id = None
         self._collector_observation = None
         return dict(checkpoint.get("extra", {}))
@@ -1142,11 +1424,7 @@ class SMDPPPO:
         load_optimizer: bool = False,
     ) -> tuple["SMDPPPO", dict[str, Any]]:
         """Construct an agent from the configuration stored in a checkpoint."""
-        checkpoint = torch.load(
-            os.fspath(path),
-            map_location="cpu",
-            weights_only=True,
-        )
+        checkpoint = cls._load_checkpoint_payload(path, "cpu")
         if checkpoint.get("format_version") != 1:
             raise ValueError("Unsupported PPO checkpoint format.")
         model_spec = dict(checkpoint.get("model_spec", {}))
@@ -1195,7 +1473,87 @@ class SMDPPPO:
             agent.optimizer.load_state_dict(checkpoint["optimizer_state"])
         agent.total_macro_steps = int(checkpoint["total_macro_steps"])
         agent.update_count = int(checkpoint["update_count"])
+        if load_optimizer and "training_state" in checkpoint:
+            agent._restore_rng_state(checkpoint["training_state"])
         return agent, dict(checkpoint.get("extra", {}))
+
+    @staticmethod
+    def _capture_rng_state() -> dict[str, Any]:
+        """Capture RNG state using only weights-only-safe primitives."""
+        numpy_state = np.random.get_state()
+        state: dict[str, Any] = {
+            "python": random.getstate(),
+            "numpy": {
+                "bit_generator": str(numpy_state[0]),
+                "keys": numpy_state[1].astype(np.uint32).tolist(),
+                "position": int(numpy_state[2]),
+                "has_gauss": int(numpy_state[3]),
+                "cached_gaussian": float(numpy_state[4]),
+            },
+            "torch_cpu": torch.get_rng_state(),
+        }
+        if torch.cuda.is_available():
+            state["torch_cuda"] = torch.cuda.get_rng_state_all()
+        return state
+
+    @staticmethod
+    def _restore_rng_state(state: dict[str, Any]) -> None:
+        """Restore the checkpoint RNG state for update-boundary restart."""
+        random.setstate(tuple(state["python"]))
+        numpy_state = state["numpy"]
+        np.random.set_state(
+            (
+                str(numpy_state["bit_generator"]),
+                np.asarray(numpy_state["keys"], dtype=np.uint32),
+                int(numpy_state["position"]),
+                int(numpy_state["has_gauss"]),
+                float(numpy_state["cached_gaussian"]),
+            )
+        )
+        torch.set_rng_state(state["torch_cpu"])
+        if "torch_cuda" in state and torch.cuda.is_available():
+            torch.cuda.set_rng_state_all(state["torch_cuda"])
+
+    @staticmethod
+    def _load_checkpoint_payload(
+        path: str | os.PathLike[str],
+        map_location: str | torch.device,
+    ) -> dict[str, Any]:
+        """Load tensors plus legacy numeric NumPy scalars in safe mode.
+
+        Older project checkpoints stored ``gymnasium.spaces.Discrete.n``
+        directly in ``model_spec``.  Recent Gymnasium versions expose it as a
+        ``numpy.int64``.  The allowlist below is deliberately limited to
+        NumPy's scalar constructor and numeric dtype classes; arbitrary Python
+        globals remain blocked by ``weights_only=True``.
+        """
+        numeric_dtypes = (
+            np.bool_,
+            np.int8,
+            np.int16,
+            np.int32,
+            np.int64,
+            np.uint8,
+            np.uint16,
+            np.uint32,
+            np.uint64,
+            np.float16,
+            np.float32,
+            np.float64,
+        )
+        safe_globals = [np._core.multiarray.scalar, np.dtype]
+        safe_globals.extend(
+            {
+                type(np.dtype(dtype))
+                for dtype in numeric_dtypes
+            }
+        )
+        with torch.serialization.safe_globals(safe_globals):
+            return torch.load(
+                os.fspath(path),
+                map_location=map_location,
+                weights_only=True,
+            )
 
     def _validate_environment(self, env: HandoverSMDPEnv) -> None:
         environment_gamma = env.transition_builder.gamma_per_second

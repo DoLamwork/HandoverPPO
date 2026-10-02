@@ -10,6 +10,7 @@ import csv
 import hashlib
 import json
 import os
+import subprocess
 import time
 from typing import Any
 
@@ -44,6 +45,108 @@ def _sha256_file(path: str) -> str:
     return digest.hexdigest()
 
 
+def _sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _canonical_sha256(value: Any) -> str:
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return _sha256_bytes(payload)
+
+
+def capture_source_state(root_path: str, output_dir: str) -> dict[str, Any]:
+    """Persist the Git state and a hash manifest of executable sources."""
+    def git(*arguments: str) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(
+            ["git", *arguments],
+            cwd=root_path,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+    revision_result = git("rev-parse", "HEAD")
+    branch_result = git("branch", "--show-current")
+    status_result = git("status", "--porcelain=v1", "--untracked-files=all")
+    patch_result = git(
+        "diff",
+        "--binary",
+        "HEAD",
+        "--",
+        "run.py",
+        "src",
+        "scripts",
+        "tests",
+        "pyproject.toml",
+        "setup.py",
+    )
+    patch = patch_result.stdout
+    patch_path = os.path.join(output_dir, "source_worktree.patch")
+    with open(patch_path, "wb") as patch_file:
+        patch_file.write(patch)
+
+    roots = ["src", "scripts", "tests"]
+    candidates = ["run.py", "pyproject.toml", "setup.py"]
+    source_paths: list[str] = []
+    for relative in candidates:
+        if os.path.isfile(os.path.join(root_path, relative)):
+            source_paths.append(relative)
+    for relative_root in roots:
+        absolute_root = os.path.join(root_path, relative_root)
+        if not os.path.isdir(absolute_root):
+            continue
+        for directory, _, names in os.walk(absolute_root):
+            for name in names:
+                if name.endswith((".py", ".toml", ".yaml", ".yml", ".json")):
+                    absolute = os.path.join(directory, name)
+                    source_paths.append(os.path.relpath(absolute, root_path))
+    files = [
+        {
+            "path": path.replace("\\", "/"),
+            "size_bytes": os.path.getsize(os.path.join(root_path, path)),
+            "sha256": _sha256_file(os.path.join(root_path, path)),
+        }
+        for path in sorted(set(source_paths))
+    ]
+    source_manifest_sha256 = _canonical_sha256(files)
+    state = {
+        "schema_version": 1,
+        "git_revision": revision_result.stdout.decode().strip() or None,
+        "git_branch": branch_result.stdout.decode().strip() or None,
+        "git_dirty": bool(status_result.stdout.strip()),
+        "git_status_porcelain": status_result.stdout.decode(
+            errors="replace"
+        ).splitlines(),
+        "tracked_source_patch_file": os.path.basename(patch_path),
+        "tracked_source_patch_sha256": _sha256_bytes(patch),
+        "source_manifest_sha256": source_manifest_sha256,
+        "source_files": files,
+        "git_errors": [
+            result.stderr.decode(errors="replace").strip()
+            for result in (
+                revision_result,
+                branch_result,
+                status_result,
+                patch_result,
+            )
+            if result.returncode != 0
+        ],
+    }
+    path = os.path.join(output_dir, "source_state.json")
+    with open(path, "w", encoding="utf-8") as source_file:
+        json.dump(state, source_file, indent=2, allow_nan=False)
+    return {
+        **state,
+        "file": os.path.basename(path),
+        "file_sha256": _sha256_file(path),
+    }
+
+
 def _manifest_record(
     data_dir: str,
     split_name: str,
@@ -74,6 +177,24 @@ def build_dataset_manifest(
     split_fractions: dict[str, float],
 ) -> dict[str, Any]:
     """Build an immutable split/file fingerprint for training auditability."""
+    provenance_path = os.path.join(data_dir, "dataset_provenance.json")
+    provenance = (
+        {
+            "file": os.path.basename(provenance_path),
+            "size_bytes": os.path.getsize(provenance_path),
+            "sha256": _sha256_file(provenance_path),
+        }
+        if os.path.isfile(provenance_path)
+        else None
+    )
+    topology_sha256 = None
+    if provenance is not None:
+        with open(provenance_path, encoding="utf-8") as source:
+            provenance_payload = json.load(source)
+        if "topology" in provenance_payload:
+            topology_sha256 = _canonical_sha256(
+                provenance_payload["topology"]
+            )
     split_pairs = {
         "train": splits.train,
         "validation": splits.validation,
@@ -85,10 +206,12 @@ def build_dataset_manifest(
         ]
         for split_name, pairs in split_pairs.items()
     }
-    return {
-        "schema_version": 1,
+    manifest = {
+        "schema_version": 2,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "data_dir": os.path.abspath(data_dir),
+        "dataset_provenance": provenance,
+        "topology_sha256": topology_sha256,
         "selected_speeds_kmh": selected_speeds,
         "split_seed": split_seed,
         "split_fractions": split_fractions,
@@ -98,6 +221,17 @@ def build_dataset_manifest(
         },
         "splits": records,
     }
+    manifest["dataset_content_sha256"] = _canonical_sha256(
+        {
+            "dataset_provenance": provenance,
+            "topology_sha256": topology_sha256,
+            "selected_speeds_kmh": selected_speeds,
+            "split_seed": split_seed,
+            "split_fractions": split_fractions,
+            "splits": records,
+        }
+    )
+    return manifest
 
 
 def write_dataset_manifest(
@@ -138,6 +272,7 @@ def write_dataset_manifest(
         "json": json_path,
         "csv": csv_path,
         "sha256": _sha256_file(json_path),
+        "dataset_content_sha256": manifest["dataset_content_sha256"],
     }
 
 
@@ -167,7 +302,7 @@ def build_3gpp_validation_reference(
         reference_env,
         BenchmarkPolicy(
             "3gpp_always_ho",
-            lambda observation: HandoverAction.HANDOVER,
+            lambda observation: HandoverAction.HO_C1,
         ),
         descriptors,
     )
@@ -199,6 +334,10 @@ def build_3gpp_validation_reference(
             str(row["speed_kmh"]): row["mean_estimated_rate_mbps"]
             for row in by_speed_rows
         },
+        "mean_relative_rate_percent_by_speed": {
+            str(row["speed_kmh"]): row["mean_relative_rate_percent"]
+            for row in by_speed_rows
+        },
         "aggregate_metrics": aggregate,
         "by_speed_metrics": by_speed_rows,
     }
@@ -218,6 +357,118 @@ def aggregate_training_trace_usage(
         "completed_episodes_by_trace": dict(sorted(completed_episodes.items())),
         "total_logged_macro_steps": sum(macro_steps.values()),
         "total_completed_episodes": sum(completed_episodes.values()),
+    }
+
+
+def write_experiment_config(
+    output_dir: str,
+    *,
+    args: Namespace,
+    train_env: HandoverSMDPEnv,
+    ppo_config: SMDPPPOConfig,
+    protocol_config: Any,
+    manifest_paths: dict[str, Any],
+    manifest: dict[str, Any],
+    source_state: dict[str, Any],
+    selected_speeds: list[int],
+) -> dict[str, Any]:
+    """Write the immutable contract that identifies one ablation arm."""
+    builder = train_env.transition_builder.observation_builder
+    reward_config = train_env.transition_builder.reward_model.config
+    observation_config = asdict(builder.config)
+    dt_ms = float(protocol_config.delta_t_ms)
+    experiment_id = args.experiment_id or os.path.basename(
+        os.path.normpath(output_dir)
+    )
+    config = {
+        "schema_name": "handover_ppo_experiment_config",
+        "schema_version": 1,
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "experiment_id": experiment_id,
+        "parent_id": args.parent_id,
+        "changed_factor": args.changed_factor,
+        "candidate": {
+            "K": len(HandoverAction) - 1,
+            "candidate_pool": builder.CANDIDATE_POLICY,
+            "candidate_order": builder.CANDIDATE_POLICY,
+            "mask_mode": "structural_slot_availability_only",
+        },
+        "action_schema": [action.name for action in HandoverAction],
+        "observation_schema": {
+            "name": train_env.objective_spec["version"],
+            "size": int(builder.size),
+            "features": list(builder.feature_names),
+        },
+        "history_windows": {
+            "trend_ticks": observation_config["trend_window_ticks"],
+            "trend_ms": observation_config["trend_window_ticks"] * dt_ms,
+            "history_ticks": observation_config["history_window_ticks"],
+            "history_ms": observation_config["history_window_ticks"] * dt_ms,
+        },
+        "normalization": observation_config,
+        "reward_schema": train_env.objective_spec["reward"],
+        "reward_weights": asdict(reward_config),
+        "discount_mode": train_env.objective_spec["discount_mode"],
+        "stay_mode": "reject_current_completed_a3_event",
+        "model": {
+            "architecture": "shared_mlp_actor_critic",
+            "hidden_sizes": list(ppo_config.hidden_sizes),
+            "activation": ppo_config.activation,
+            "observation_size": int(train_env.observation_space.shape[0]),
+            "action_size": int(train_env.action_space.n),
+        },
+        "ppo": asdict(ppo_config),
+        "seeds": {
+            "training": args.seed,
+            "split": args.split_seed,
+        },
+        "budget": {
+            "total_macro_steps": args.total_macro_steps,
+            "rollout_macro_steps": args.rollout_steps,
+            "validation_interval_macro_steps": args.evaluation_interval,
+        },
+        "evaluation": {
+            "selected_speeds_kmh": selected_speeds,
+            "qos_rate_ratio": args.qos_rate_ratio,
+            "qos_rate_ratio_per_speed": args.qos_rate_ratio_per_speed,
+            "qos_relative_rate_ratio": args.qos_relative_rate_ratio,
+            "qos_relative_rate_ratio_per_speed": (
+                args.qos_relative_rate_ratio_per_speed
+            ),
+            "final_test_enabled": not args.skip_final_test,
+            "test_used_for_selection": False,
+        },
+        "protocol_config": asdict(protocol_config),
+        "dataset": {
+            "manifest_file": os.path.basename(manifest_paths["json"]),
+            "manifest_sha256": manifest_paths["sha256"],
+            "content_sha256": manifest_paths["dataset_content_sha256"],
+            "topology_sha256": manifest.get("topology_sha256"),
+        },
+        "source": {
+            "git_revision": source_state["git_revision"],
+            "git_dirty": source_state["git_dirty"],
+            "source_manifest_sha256": source_state[
+                "source_manifest_sha256"
+            ],
+            "tracked_source_patch_sha256": source_state[
+                "tracked_source_patch_sha256"
+            ],
+            "source_state_file": source_state["file"],
+        },
+        "checkpoint_contract": {
+            "save_boundary": "ppo_update_boundary",
+            "exact_resume": False,
+            "resume_mode": "optimizer_and_rng_with_episode_restart",
+        },
+    }
+    path = os.path.join(output_dir, "experiment_config.json")
+    with open(path, "w", encoding="utf-8") as config_file:
+        json.dump(config, config_file, indent=2, allow_nan=False)
+    return {
+        "config": config,
+        "path": path,
+        "sha256": _sha256_file(path),
     }
 
 
@@ -287,6 +538,7 @@ class TrainingProgressLogger:
                 f"pi {event['policy_loss']:+.4f} | "
                 f"vf {event['value_loss']:.4f} | "
                 f"ent {event['entropy']:.4f} | "
+                f"nent {event['normalized_entropy']:.3f} | "
                 f"kl {event['approximate_kl']:.5f} | "
                 f"clip {event['clip_fraction']:.3f} | "
                 f"ev {event['explained_variance']:+.3f}",
@@ -315,7 +567,10 @@ class TrainingProgressLogger:
             if "aggregate_rate_ratio_to_3gpp" in event:
                 qos_state = "pass" if event["qos_feasible"] else "fail"
                 qos_text = (
-                    f" | QoS {100 * event['aggregate_rate_ratio_to_3gpp']:.1f}%"
+                    f" | QoS Mbps "
+                    f"{100 * event['aggregate_rate_ratio_to_3gpp']:.1f}%"
+                    f" / RR "
+                    f"{100 * event['aggregate_relative_rate_ratio_to_3gpp']:.1f}%"
                     f" ({qos_state})"
                 )
             print(
@@ -326,7 +581,7 @@ class TrainingProgressLogger:
                 f"HOF {event['handover_failure_percent']:.3f}% | "
                 f"PP {event['ping_pong_percent']:.3f}% | "
                 f"HO {100 * event['handover_fraction']:.1f}% | "
-                f"WAIT_50 {100 * event['wait_fraction']:.1f}%"
+                f"STAY {100 * event['stay_fraction']:.1f}%"
                 f"{qos_text}"
                 f"{marker}",
                 flush=True,
@@ -394,12 +649,6 @@ def main(root_path: str, args: Namespace) -> int:
         trace_pairs=splits.validation,
         gamma_per_second=ppo_config.gamma_per_second,
     )
-    test_env = HandoverSMDPEnv(
-        protocol_config,
-        data_dir=data_dir,
-        trace_pairs=splits.test,
-        gamma_per_second=ppo_config.gamma_per_second,
-    )
     agent = SMDPPPO(
         train_env.observation_space.shape[0],
         train_env.action_space.n,
@@ -420,6 +669,18 @@ def main(root_path: str, args: Namespace) -> int:
         split_fractions=split_fractions,
     )
     manifest_paths = write_dataset_manifest(output_dir, manifest)
+    source_state = capture_source_state(root_path, output_dir)
+    experiment = write_experiment_config(
+        output_dir,
+        args=args,
+        train_env=train_env,
+        ppo_config=ppo_config,
+        protocol_config=protocol_config,
+        manifest_paths=manifest_paths,
+        manifest=manifest,
+        source_state=source_state,
+        selected_speeds=selected_speeds,
+    )
     print("Building validation 3GPP Always-HO QoS reference...", flush=True)
     validation_reference = build_3gpp_validation_reference(
         protocol_config,
@@ -444,8 +705,21 @@ def main(root_path: str, args: Namespace) -> int:
         )
     audit_metadata = {
         "protocol_config": asdict(protocol_config),
+        "objective": train_env.objective_spec,
         "dataset_manifest_file": os.path.basename(manifest_paths["json"]),
         "dataset_manifest_sha256": manifest_paths["sha256"],
+        "dataset_content_sha256": manifest_paths[
+            "dataset_content_sha256"
+        ],
+        "topology_sha256": manifest["topology_sha256"],
+        "experiment_config_file": os.path.basename(experiment["path"]),
+        "experiment_config_sha256": experiment["sha256"],
+        "experiment_config": experiment["config"],
+        "source_state_file": source_state["file"],
+        "source_manifest_sha256": source_state["source_manifest_sha256"],
+        "source_patch_sha256": source_state[
+            "tracked_source_patch_sha256"
+        ],
         "validation_3gpp_reference_file": os.path.basename(
             validation_reference_path
         ),
@@ -454,7 +728,9 @@ def main(root_path: str, args: Namespace) -> int:
         "split_fractions": split_fractions,
     }
     latest_path = os.path.join(output_dir, "smdp_ppo_latest.pt")
-    final_path = os.path.join(output_dir, "smdp_ppo_final.pt")
+    selected_export_path = os.path.join(
+        output_dir, "smdp_ppo_selected.pt"
+    )
     metrics_path = os.path.join(output_dir, "training_metrics.jsonl")
     checkpoint_manager = ValidationCheckpointManager(
         output_dir,
@@ -464,8 +740,18 @@ def main(root_path: str, args: Namespace) -> int:
         reference_rates_by_speed=validation_reference[
             "mean_estimated_rate_mbps_by_speed"
         ],
+        reference_relative_rate_percent=validation_reference[
+            "mean_relative_rate_percent"
+        ],
+        reference_relative_rates_by_speed=validation_reference[
+            "mean_relative_rate_percent_by_speed"
+        ],
         qos_rate_ratio=args.qos_rate_ratio,
         qos_rate_ratio_per_speed=args.qos_rate_ratio_per_speed,
+        qos_relative_rate_ratio=args.qos_relative_rate_ratio,
+        qos_relative_rate_ratio_per_speed=(
+            args.qos_relative_rate_ratio_per_speed
+        ),
         checkpoint_extra=audit_metadata,
     )
     progress_logger = TrainingProgressLogger(
@@ -489,14 +775,26 @@ def main(root_path: str, args: Namespace) -> int:
     print(f"Dataset manifest: {manifest_paths['json']}", flush=True)
     print(f"Manifest SHA-256: {manifest_paths['sha256']}", flush=True)
     print(
+        "Dataset content SHA-256: "
+        f"{manifest_paths['dataset_content_sha256']}",
+        flush=True,
+    )
+    print(f"Experiment config: {experiment['path']}", flush=True)
+    print(
+        f"Source manifest SHA-256: {source_state['source_manifest_sha256']}",
+        flush=True,
+    )
+    print(
         "Validation 3GPP rate: "
         f"{validation_reference['mean_estimated_rate_mbps']:.3f} Mbps",
         flush=True,
     )
     print(
-        "QoS floors: aggregate="
-        f"{100 * args.qos_rate_ratio:.1f}% of 3GPP, per-speed="
-        f"{100 * args.qos_rate_ratio_per_speed:.1f}% of 3GPP",
+        "QoS floors (Mbps / relative rate): aggregate="
+        f"{100 * args.qos_rate_ratio:.1f}% / "
+        f"{100 * args.qos_relative_rate_ratio:.1f}%, per-speed="
+        f"{100 * args.qos_rate_ratio_per_speed:.1f}% / "
+        f"{100 * args.qos_relative_rate_ratio_per_speed:.1f}%",
         flush=True,
     )
     print(f"Live metrics: {metrics_path}", flush=True)
@@ -524,13 +822,15 @@ def main(root_path: str, args: Namespace) -> int:
         or checkpoint_summary["best_return"]
         or latest_path
     )
+    qos_feasible = checkpoint_summary["best_qos"] is not None
     selection_reason = (
         "best_qos"
-        if checkpoint_summary["best_qos"]
-        else "best_return_fallback"
+        if qos_feasible
+        else "infeasible_best_return_best_effort"
         if checkpoint_summary["best_return"]
-        else "latest_fallback"
+        else "infeasible_latest_best_effort"
     )
+    experiment_status = "QOS_FEASIBLE" if qos_feasible else "QOS_INFEASIBLE"
     print(f"Selecting checkpoint: {selected_path}", flush=True)
     selected_agent, selection_metadata = SMDPPPO.from_checkpoint(
         selected_path,
@@ -541,27 +841,47 @@ def main(root_path: str, args: Namespace) -> int:
     )
     print("Running final validation evaluation...", flush=True)
     validation_metrics = selected_agent.evaluate(validation_env)
-    print("Running held-out test evaluation...", flush=True)
-    test_metrics = selected_agent.evaluate(test_env)
+    test_metrics = None
+    if not args.skip_final_test:
+        test_env = HandoverSMDPEnv(
+            protocol_config,
+            data_dir=data_dir,
+            trace_pairs=splits.test,
+            gamma_per_second=ppo_config.gamma_per_second,
+        )
+        print("Running held-out test evaluation...", flush=True)
+        test_metrics = selected_agent.evaluate(test_env)
+    else:
+        print(
+            "Skipping held-out test evaluation (development ablation).",
+            flush=True,
+        )
     selected_agent.save_checkpoint(
-        final_path,
+        selected_export_path,
         extra={
             **audit_metadata,
             "selected_from": selected_path,
             "selection_reason": selection_reason,
             "selection_metadata": selection_metadata,
             "checkpoint_selection_summary": checkpoint_summary,
+            "experiment_status": experiment_status,
             "validation": asdict(validation_metrics),
-            "test": asdict(test_metrics),
+            "test": (
+                asdict(test_metrics) if test_metrics is not None else None
+            ),
         },
     )
 
     report = {
         "data_dir": data_dir,
+        "experiment_status": experiment_status,
+        "experiment_config": experiment,
+        "source_state": source_state,
         "selected_speeds_kmh": selected_speeds,
         "dataset_manifest": manifest_paths,
         "ppo_config": asdict(ppo_config),
         "protocol_config": asdict(protocol_config),
+        "objective": train_env.objective_spec,
         "split_seed": args.split_seed,
         "split_fractions": split_fractions,
         "split_sizes": {
@@ -575,7 +895,8 @@ def main(root_path: str, args: Namespace) -> int:
         "checkpoint_selection": checkpoint_summary,
         "selection_reason": selection_reason,
         "validation": asdict(validation_metrics),
-        "test": asdict(test_metrics),
+        "test": asdict(test_metrics) if test_metrics is not None else None,
+        "test_evaluated": test_metrics is not None,
         "checkpoints": {
             "best": checkpoint_summary["best_return"],
             "best_return": checkpoint_summary["best_return"],
@@ -585,7 +906,7 @@ def main(root_path: str, args: Namespace) -> int:
             "pareto": checkpoint_summary["pareto_dir"],
             "latest": latest_path,
             "selected_from": selected_path,
-            "final": final_path,
+            "selected_export": selected_export_path,
             "metrics": metrics_path,
             "validation_metrics_csv": checkpoint_summary["metrics_csv"],
             "validation_metrics_json": checkpoint_summary["metrics_json"],
@@ -601,9 +922,13 @@ def main(root_path: str, args: Namespace) -> int:
     print(f"Training complete: {agent.total_macro_steps} macro-steps")
     print(f"Selected checkpoint: {selected_path}")
     print(f"Selection reason: {selection_reason}")
+    print(f"Experiment status: {experiment_status}")
     print(f"Validation mean return: {validation_metrics.mean_return:.6f}")
-    print(f"Test mean return: {test_metrics.mean_return:.6f}")
-    print(f"Final checkpoint: {final_path}")
+    if test_metrics is not None:
+        print(f"Test mean return: {test_metrics.mean_return:.6f}")
+    else:
+        print("Test mean return: not evaluated")
+    print(f"Selected checkpoint export: {selected_export_path}")
     print(f"Dataset manifest: {manifest_paths['json']}")
     print(f"Training report: {report_path}")
     return 0

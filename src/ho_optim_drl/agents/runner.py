@@ -26,14 +26,16 @@ def run_policy(
                 else np.empty(0, dtype=np.float32)
             )
             action = policy.predict(observation)
-            if action == HandoverAction.HANDOVER:
-                engine.start_handover()
-            elif action == HandoverAction.WAIT_50:
-                engine.wait_50()
-            elif action == HandoverAction.STAY:
+            if action == HandoverAction.STAY:
                 engine.stay()
+            elif action == HandoverAction.HO_C1:
+                # Diagnostic reference policies always accept the A3 target.
+                engine.start_handover()
             else:
-                raise ValueError(f"Unsupported handover action: {action}")
+                raise ValueError(
+                    "run_policy has no candidate mapping; only STAY and HO_C1 "
+                    f"are supported, got {action}."
+                )
 
         tick = engine.advance_one_tick()
         if observation_builder is not None:

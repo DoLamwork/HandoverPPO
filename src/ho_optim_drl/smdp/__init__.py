@@ -6,6 +6,7 @@ from .observation import (
     A3ObservationConfig,
     ObservationBuilder,
 )
+from .multicandidate import TopologyCandidateObservationBuilder
 from .reward import (
     HandoverRewardConfig,
     HandoverRewardModel,
@@ -21,6 +22,7 @@ __all__ = [
     "A3ObservationBuilder",
     "A3ObservationConfig",
     "ObservationBuilder",
+    "TopologyCandidateObservationBuilder",
     "HandoverRewardConfig",
     "HandoverRewardModel",
     "RewardBreakdown",

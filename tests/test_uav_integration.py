@@ -188,6 +188,20 @@ class IntegratedDatasetTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fingerprint changed"):
             checkpoint_pairs(self.data, self.root / "model.pt", extra, split="test")
 
+    def test_changed_topology_provenance_is_rejected(self):
+        provenance_path = self.data / "dataset_provenance.json"
+        provenance_path.write_text('{"topology": "first"}', encoding="utf-8")
+        _, extra = self._checkpoint_manifest()
+
+        provenance_path.write_text('{"topology": "changed"}', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "topology provenance"):
+            checkpoint_pairs(
+                self.data,
+                self.root / "model.pt",
+                extra,
+                split="test",
+            )
+
 
 class IntegratedCommandTests(unittest.TestCase):
     def test_pipeline_commands_are_available_outside_project(self):

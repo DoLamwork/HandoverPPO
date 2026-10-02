@@ -79,15 +79,6 @@ class BenchmarkTests(unittest.TestCase):
             ),
             self.descriptors,
         )
-        wait_rows = benchmark_policy(
-            self._env(),
-            BenchmarkPolicy(
-                "fixed_wait_test_policy",
-                lambda observation: HandoverAction.WAIT_50,
-            ),
-            self.descriptors,
-        )
-
         self.assertTrue(
             all(
                 row["handover_action_percent"] == 100.0
@@ -102,7 +93,7 @@ class BenchmarkTests(unittest.TestCase):
         )
         self.assertTrue(all(row["actionable"] for row in handover_rows))
         self.assertTrue(
-            all(row["wait_action_percent"] == 100.0 for row in wait_rows)
+            all(row["stay_action_percent"] == 100.0 for row in stay_rows)
         )
         self.assertTrue(
             all(
@@ -138,7 +129,6 @@ class BenchmarkTests(unittest.TestCase):
                 "macro_steps": 2,
                 "handover_actions": 1,
                 "stay_actions": 1,
-                "wait_actions": 0,
                 "ho_attempts": 2,
                 "ho_successes": 1,
                 "handover_failures": 1,
@@ -162,7 +152,6 @@ class BenchmarkTests(unittest.TestCase):
                 "macro_steps": 4,
                 "handover_actions": 3,
                 "stay_actions": 1,
-                "wait_actions": 2,
                 "ho_attempts": 3,
                 "ho_successes": 3,
                 "handover_failures": 0,
@@ -183,9 +172,9 @@ class BenchmarkTests(unittest.TestCase):
         self.assertAlmostEqual(aggregate["ping_pong_percent"], 50.0)
         self.assertAlmostEqual(
             aggregate["handover_action_percent"],
-            50.0,
+            100 * 4 / 6,
         )
-        self.assertAlmostEqual(aggregate["wait_action_percent"], 25.0)
+        self.assertAlmostEqual(aggregate["stay_action_percent"], 100 * 2 / 6)
 
     def test_paired_comparison_matches_trajectory_ids(self) -> None:
         rows = [

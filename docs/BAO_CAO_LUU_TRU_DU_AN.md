@@ -1,19 +1,24 @@
 # Báo cáo lưu trữ dự án HandoverOptimDRL
 
-**Ngày kiểm tra:** 14/09/2026<br>
+**Ngày kiểm tra gần nhất:** 26/09/2026<br>
 **Thư mục dự án:** `C:\Project\HandoverOptimDRL`<br>
-**Nhánh Git:** `main`<br>
+**Nhánh Git hiện tại:** `codex/a3-multicandidate-ppo`<br>
 **Commit nền trước đợt chỉnh sửa:** `b476a4d48b547b2013995aae31d08bfe38ad2ab3` (`result UAV data`, 31/07/2026)<br>
 **Dataset chính theo xác nhận của tác giả:** `data/uav_100m_grid100m_dev_processed`<br>
 **PPO run lịch sử:** `results/models/uav_100m_grid100m_ppo_30_90`<br>
 **Benchmark lịch sử:** `results/benchmark/uav_100m_grid100m_all_speeds_percent`<br>
-**Trạng thái test cuối:** 130/130 test qua trong 33,149 giây.
+**Trạng thái test cuối:** 132/132 test qua ngày 26/09/2026.
 
 > Báo cáo này mô tả trạng thái dự án sau đợt tích hợp, không chỉ commit nền
 > `b476a4d`. Phần source của `data_generator/` và các file tích hợp được quản lý
 > bởi Git; dataset dung lượng lớn được giữ cục bộ và loại khỏi Git thường.
 > Muốn tái tạo đầy đủ thí nghiệm phải lưu dataset riêng cùng metadata/hash của
 > training run; chỉ giữ source-code commit là chưa đủ.
+
+> **Cập nhật multi-candidate 26/09/2026:** code hiện tại dùng 11 action
+> `STAY + HO_C1..HO_C10` và observation 109 chiều. Các bảng kết quả model cũ
+> trong báo cáo này là kết quả lịch sử của policy 19-feature/2-action, không
+> phải kết quả của thiết kế mới. Xem `docs/a3_multicandidate_actions.md`.
 
 ## 1. Tóm tắt điều hành
 
@@ -27,17 +32,19 @@ Ranh giới trách nhiệm đã được thống nhất và thể hiện trong c
 - `data_generator` **chỉ sinh RSRP/SINR**; không có serving cell, kết nối, A3,
   TTT, handover, HOF hoặc RLF.
 - `src/ho_optim_drl` là nơi duy nhất xử lý toàn bộ trạng thái kết nối và handover.
-- Agent PPO không chọn cell tùy ý. Khi một sự kiện A3 đã hoàn tất TTT và đưa ra
-  một target cụ thể, agent chọn `STAY`, `HANDOVER` hoặc `WAIT_50`.
+- A3+TTT vẫn trigger decision, nhưng PPO hiện chọn `STAY` hoặc handover tới một
+  trong 10 candidate sector. `C1` là target A3; các slot còn lại được xây từ
+  sector cùng site, site vật lý lân cận và RSRP hiện tại.
 
 Dataset chính có 1.060 quỹ đạo, mỗi quỹ đạo gồm một cặp RSRP/SINR, 6.000 mẫu,
 21 cell và bước mẫu 10 ms. PPO được train trên các tốc độ 30, 50, 70 và 90 km/h;
 120 và 150 km/h chỉ được dùng để kiểm tra zero-shot.
 
-Các kết quả benchmark lưu sẵn trong báo cáo này được tạo bởi model cũ có hai
-action `STAY/HANDOVER`; chúng là mốc lịch sử và chưa phản ánh action `WAIT_50`
-mới thêm. Kết quả đó cho thấy PPO đạt mục tiêu tối ưu reward tốt hơn baseline
-A3 Always-HO. Trên 260 trace, PPO có mean controlled return `-7,584`, so với
+Các kết quả benchmark lưu sẵn trong báo cáo này được tạo bởi model lịch sử có
+hai action `STAY/HANDOVER`, không tương thích với không gian action hiện tại.
+Kết quả lịch sử đó cho
+thấy PPO đạt mục tiêu tối ưu reward tốt hơn baseline A3 Always-HO. Trên 260
+trace, PPO có mean controlled return `-7,584`, so với
 `-25,819` của A3 Always-HO. Đổi lại, PPO hy sinh
 một phần estimated rate so với Always-HO: `20,890` so với `22,179 Mbps`. PPO
 giảm HOF từ `12,182%` xuống `8,643%`, RLF recovery time từ `1,649%` xuống
@@ -51,11 +58,10 @@ mặc định radio, nhưng artifact lịch sử chưa được retrain/regenera
    đóng góp macro-transition. Nguyên nhân là validation làm mất trạng thái collector
    và seed lại train environment. Lỗi này đã được sửa trong source hiện tại; các
    checkpoint cũ không tự thay đổi và vẫn phải retrain.
-2. Dataset chính không có `simulation_manifest.json` hoặc
-   `dataset_metadata.json`; checkpoint cũ cũng không lưu protocol config. Vì thế
-   không thể chứng minh từ artifact cấu hình đã dùng để sinh trace. Source hiện tại
-   cho generator và environment dùng chung 2,1 GHz/10 MHz/10 ms, nhưng thay đổi này
-   không chứng minh hoặc sửa ngược cấu hình của các CSV cũ.
+2. Dataset chính không có `simulation_manifest.json`; checkpoint cũ cũng không
+   lưu protocol config. Compact metadata `dataset_provenance.json` hiện đã ghi
+   topology 7 site/21 sector và cấu hình lịch sử được phục dựng. Runtime vẫn cố
+   ý dùng 2,1 GHz/10 MHz/10 ms; file provenance không tự override runtime.
 
 ## 2. Phạm vi và cách kiểm tra
 
@@ -91,9 +97,9 @@ Input của environment là hai ma trận theo thời gian:
 
 Mỗi trajectory giữ nguyên trong một episode. Agent không điều khiển đường bay,
 tốc độ, độ cao, công suất phát, antenna beam, resource allocation, scheduler hay
-cell load. Agent cũng không trực tiếp chọn target cell. Target được protocol
-engine xác định từ cell có RSRP mạnh nhất ở thời điểm đo và được chốt khi A3 hoàn
-tất TTT.
+cell load. Agent hiện trực tiếp chọn target trong shortlist 10 cell được chốt
+khi A3 hoàn tất TTT. `C1` là target A3; `C2..C10` cho phép thử các sector/site
+lân cận dựa trên topology và tín hiệu causal, không dùng mẫu tương lai.
 
 Output nghiên cứu gồm:
 
@@ -143,7 +149,7 @@ RadioTrace [RSRP_A3, SINR_rate, SINR_RLM]
 HandoverEngine: serving/A3/TTT/HO/RLM/RLF/reconnection
                    |
                    v
-SMDP: observation 19 chiều -> STAY/HANDOVER/WAIT_50 -> macro-transition
+SMDP: observation 109 chiều -> STAY/HO_C1..HO_C10 -> macro-transition
                    |
           +--------+---------+
           |                  |
@@ -385,7 +391,7 @@ tức chênh lệch nhỏ hơn 0 dB. Trong deadband 0–2 dB, trạng thái A3 t
 giữ nguyên. Nếu target đổi trong lúc TTT đang chạy, TTT được reset. TTT hiện là
 40 ms, tương ứng 4 tick.
 
-### 7.3. Decision và ba action
+### 7.3. Decision và 11 action
 
 Khi A3 duy trì đủ TTT, engine dừng tại `DECISION` và chốt:
 
@@ -394,17 +400,13 @@ Khi A3 duy trì đủ TTT, engine dừng tại `DECISION` và chốt:
 - tick A3 bắt đầu;
 - A3 margin hiện tại.
 
-Không thể tiến thời gian tiếp nếu chưa gọi một trong ba action:
+Không thể tiến thời gian tiếp nếu chưa gọi một trong 11 action:
 
-- `HANDOVER`: bắt đầu HO preparation tới target đã chốt.
 - `STAY`: từ chối event hiện tại; cùng cặp serving-target bị suppress cho đến khi
   A3 rời điều kiện hoặc target thay đổi. Cơ chế này tránh việc agent bị hỏi cùng
   một quyết định ở mọi tick.
-- `WAIT_50`: chưa chấp nhận cũng chưa suppress event; engine tiến đúng 50 ms
-  (5 tick với `dt=10 ms`) và đưa lại cùng cơ hội quyết định nếu serving, target
-  và điều kiện A3 vẫn hợp lệ. Nếu một trong các điều kiện này thay đổi, lượt chờ
-  bị hủy và engine trở về xử lý A3/TTT bình thường. Rate và các sự kiện giao thức
-  trong 50 ms vẫn được cộng vào reward của macro-transition.
+- `HO_C1`: handover tới target A3 đã chốt.
+- `HO_C2..HO_C10`: handover tới các candidate sector được chốt cùng observation.
 
 ### 7.4. Handover execution
 
@@ -469,10 +471,10 @@ hưởng của action nên reward được lưu riêng là `uncontrolled_reward`
 return và `controlled_return` bắt đầu từ decision đầu tiên; protocol metric vẫn
 bao phủ toàn trace.
 
-### 8.2. Observation 19 chiều
+### 8.2. Observation 109 chiều
 
 Observation chỉ dùng hiện tại và lịch sử đã quan sát, không đọc sample tương lai.
-Các feature đã chuẩn hóa gồm:
+19 feature đầu giữ nguyên cho serving và A3 target `C1`:
 
 | Nhóm | Feature |
 |---|---|
@@ -482,11 +484,15 @@ Các feature đã chuẩn hóa gồm:
 | RLM risk | serving–Qout gap, target–Qin gap, N310 progress, T310 active/progress |
 | Mobility history gián tiếp | serving residence time, time since last HO, target là cell trước hay không, recent HO count |
 
+Mỗi candidate `C2..C10` thêm 10 feature: spectral efficiency, delta so với
+serving, A3 margin hiện tại/mean/min/slope/std, SINR slope, Qin gap và cờ previous
+cell. Tổng cộng `19 + 9 × 10 = 109` feature.
+
 SINR dùng trong ba spectral-efficiency feature bị clip vào `[-10, 10] dB`; clip
 này chỉ thuộc observation. Rate/reward vẫn dùng SINR raw. Observation không chứa
 speed, vị trí, hướng bay hoặc độ cao một cách tường minh. Vì vậy có thể gọi nó là
 causal finite-history observation/approximate state; chưa có cơ sở khẳng định
-vector 19 chiều là trạng thái Markov đầy đủ.
+vector 109 chiều là trạng thái Markov đầy đủ.
 
 ### 8.3. Reward
 
@@ -541,22 +547,22 @@ truncate; trường này tồn tại để giữ contract tổng quát.
 ### 9.1. Network
 
 ```text
-input 19
-  -> Linear(19,64) -> Tanh
+input 109
+  -> Linear(109,64) -> Tanh
   -> Linear(64,64) -> Tanh
-  -> policy head: 3 logits [STAY, HANDOVER, WAIT_50]
+  -> policy head: 11 logits [STAY, HO_C1..HO_C10]
   -> value head: 1 scalar
 ```
 
-Hai head dùng chung encoder. Tổng số tham số trainable là 5.700. Linear layer
-được orthogonal initialization; policy head gain 0,01, value head gain 1,0.
+Hai head dùng chung encoder. Linear layer trong encoder được orthogonal
+initialization; policy head được khởi tạo đúng bằng 0 để 11 action hợp lệ có
+xác suất ban đầu bằng nhau, value head dùng gain 1,0.
 Training sample từ categorical distribution; evaluate/benchmark chọn argmax
 deterministic.
 
-Checkpoint cũ có policy head 2 logits vẫn được loader suy luận kích thước và có
-thể dùng để evaluate/benchmark lịch sử. Tuy nhiên, muốn policy thực sự học
-`WAIT_50` phải train model mới với action space 3; không thể resume optimizer và
-policy head 2-action vào model 3-action như thể cùng một bài toán.
+Checkpoint 19-feature/2-action hoặc các checkpoint thử nghiệm 3-action không
+tương thích với policy head 11 logits hiện tại. Sau thay đổi này cần train model
+109-feature/11-action mới từ đầu.
 
 ### 9.2. Hyperparameter của run chính
 

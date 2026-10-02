@@ -22,7 +22,8 @@ class BenchmarkPolicy:
     """Named deterministic action selector."""
 
     name: str
-    select_action: Callable[[np.ndarray], int | HandoverAction]
+    select_action: Callable[..., int | HandoverAction]
+    uses_action_mask: bool = False
 
 
 @dataclass(frozen=True)
@@ -59,7 +60,7 @@ def benchmark_policy(
         macro_steps = 0
         handover_actions = 0
         stay_actions = 0
-        wait_actions = 0
+        candidate_actions = [0] * 10
         controlled_duration_seconds = 0.0
 
         try:
@@ -84,9 +85,12 @@ def benchmark_policy(
 
         if actionable:
             while True:
-                action = HandoverAction(
-                    int(policy.select_action(observation))
+                selected = (
+                    policy.select_action(observation, env.action_mask())
+                    if policy.uses_action_mask
+                    else policy.select_action(observation)
                 )
+                action = HandoverAction(int(selected))
                 (
                     observation,
                     _,
@@ -100,9 +104,10 @@ def benchmark_policy(
                 )
                 controlled_duration_seconds += float(info["duration_seconds"])
                 macro_steps += 1
-                handover_actions += int(action is HandoverAction.HANDOVER)
+                handover_actions += int(action.is_handover)
                 stay_actions += int(action is HandoverAction.STAY)
-                wait_actions += int(action is HandoverAction.WAIT_50)
+                if action.candidate_slot is not None:
+                    candidate_actions[action.candidate_slot] += 1
                 if terminated or truncated:
                     break
 
@@ -111,7 +116,7 @@ def benchmark_policy(
             raise RuntimeError("Benchmark environment did not retain its trace.")
         statistics = env.engine.get_statistics(trace)
         full_reward = uncontrolled_reward + controlled_reward
-        total_actions = handover_actions + stay_actions + wait_actions
+        total_actions = handover_actions + stay_actions
         total_time_s = float(statistics["total_time_s"])
         connected_percent = (
             100
@@ -136,7 +141,10 @@ def benchmark_policy(
                 "macro_steps": macro_steps,
                 "handover_actions": handover_actions,
                 "stay_actions": stay_actions,
-                "wait_actions": wait_actions,
+                **{
+                    f"ho_c{index + 1}_actions": count
+                    for index, count in enumerate(candidate_actions)
+                },
                 "handover_action_percent": (
                     100 * handover_actions / total_actions
                     if total_actions
@@ -144,11 +152,6 @@ def benchmark_policy(
                 ),
                 "stay_action_percent": (
                     100 * stay_actions / total_actions
-                    if total_actions
-                    else 0.0
-                ),
-                "wait_action_percent": (
-                    100 * wait_actions / total_actions
                     if total_actions
                     else 0.0
                 ),
@@ -230,8 +233,7 @@ def aggregate_benchmark_rows(
             int(row["handover_actions"]) for row in group
         )
         stay_actions = sum(int(row["stay_actions"]) for row in group)
-        wait_actions = sum(int(row.get("wait_actions", 0)) for row in group)
-        total_actions = handover_actions + stay_actions + wait_actions
+        total_actions = handover_actions + stay_actions
 
         result = {
             "policy": key[0],
@@ -274,7 +276,6 @@ def aggregate_benchmark_rows(
             "mean_macro_steps": _mean(group, "macro_steps"),
             "handover_actions": handover_actions,
             "stay_actions": stay_actions,
-            "wait_actions": wait_actions,
             "handover_action_percent": (
                 100 * handover_actions / total_actions
                 if total_actions
@@ -282,11 +283,6 @@ def aggregate_benchmark_rows(
             ),
             "stay_action_percent": (
                 100 * stay_actions / total_actions
-                if total_actions
-                else 0.0
-            ),
-            "wait_action_percent": (
-                100 * wait_actions / total_actions
                 if total_actions
                 else 0.0
             ),
@@ -308,6 +304,9 @@ def aggregate_benchmark_rows(
                 100 * ping_pong_events / successes if successes else 0.0
             ),
         }
+        for index in range(1, 11):
+            field = f"ho_c{index}_actions"
+            result[field] = sum(int(row.get(field, 0)) for row in group)
         if by_speed:
             result["speed_kmh"] = key[1]
         aggregated.append(result)

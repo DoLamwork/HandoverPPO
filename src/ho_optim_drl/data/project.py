@@ -77,6 +77,19 @@ def checkpoint_pairs(data_dir, checkpoint_path, extra, *, split, speeds=None, sp
         if fractions and any(value is not None and value != saved_fractions[name] for name, value in fractions.items()):
             raise ValueError("Split fractions differ from the checkpoint's saved split.")
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        provenance = manifest.get("dataset_provenance")
+        if provenance is not None:
+            provenance_path = Path(data_dir) / provenance["file"]
+            if not provenance_path.is_file():
+                raise FileNotFoundError(
+                    "Checkpoint topology provenance is missing: "
+                    f"{provenance_path}"
+                )
+            if file_sha256(provenance_path) != provenance["sha256"]:
+                raise ValueError(
+                    "Checkpoint topology provenance fingerprint changed: "
+                    f"{provenance_path}"
+                )
         records = manifest["splits"][split]
         pairs = [TracePair(row["speed_kmh"], row["trajectory_id"], row["rsrp_file"], row["sinr_file"]) for row in records]
         selected = filter_trace_pairs_by_speed(pairs, speeds)

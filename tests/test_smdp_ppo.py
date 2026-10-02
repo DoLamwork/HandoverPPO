@@ -73,7 +73,13 @@ def _evaluation_metrics(
     handover_failure_percent: float,
     ping_pong_percent: float,
     handover_attempts: int,
+    relative_rate_percent: float | None = None,
 ) -> EvaluationMetrics:
+    relative_rate_percent = (
+        100 * rate_mbps / 12.0
+        if relative_rate_percent is None
+        else relative_rate_percent
+    )
     return EvaluationMetrics(
         episodes=2,
         skipped_no_decision=0,
@@ -84,11 +90,10 @@ def _evaluation_metrics(
         mean_ping_pong_penalty=-0.5,
         mean_macro_steps=3.0,
         handover_fraction=0.5,
-        stay_fraction=0.25,
-        wait_fraction=0.25,
+        stay_fraction=0.5,
         mean_estimated_rate_mbps=rate_mbps,
         mean_max_estimated_rate_mbps=12.0,
-        mean_relative_rate_percent=100 * rate_mbps / 12.0,
+        mean_relative_rate_percent=relative_rate_percent,
         mean_connected_percent=98.0,
         mean_estimated_rate_mbps_by_speed={"30": rate_mbps},
         total_handover_attempts=handover_attempts,
@@ -100,6 +105,9 @@ def _evaluation_metrics(
         rlf_time_percent=rlf_time_percent,
         total_ping_pong=1,
         ping_pong_percent=ping_pong_percent,
+        mean_relative_rate_percent_by_speed={
+            "30": relative_rate_percent
+        },
     )
 
 
@@ -223,11 +231,12 @@ class PPOIntegrationTests(unittest.TestCase):
             seed=3,
             device="cpu",
         )
+        self.observation_size = self.env.observation_space.shape[0]
 
     def test_collection_uses_environment_discount_and_update_changes_model(
         self,
     ) -> None:
-        agent = SMDPPPO(19, len(HandoverAction), self.config)
+        agent = SMDPPPO(self.observation_size, len(HandoverAction), self.config)
         before = {
             name: parameter.detach().clone()
             for name, parameter in agent.model.named_parameters()
@@ -261,7 +270,7 @@ class PPOIntegrationTests(unittest.TestCase):
         )
 
     def test_evaluation_is_deterministic_and_covers_each_trace_once(self) -> None:
-        agent = SMDPPPO(19, len(HandoverAction), self.config)
+        agent = SMDPPPO(self.observation_size, len(HandoverAction), self.config)
 
         first = agent.evaluate(self.env)
         second = agent.evaluate(self.env)
@@ -273,7 +282,7 @@ class PPOIntegrationTests(unittest.TestCase):
         self.assertLessEqual(first.handover_fraction, 1.0)
 
     def test_separate_validation_env_preserves_training_collector(self) -> None:
-        agent = SMDPPPO(19, len(HandoverAction), self.config)
+        agent = SMDPPPO(self.observation_size, len(HandoverAction), self.config)
         agent.collect_rollout(self.env, rollout_steps=1, reset_seed=11)
         collector_env_id = agent._collector_env_id
         collector_observation = agent._collector_observation.copy()
@@ -292,7 +301,7 @@ class PPOIntegrationTests(unittest.TestCase):
         )
 
     def test_evaluation_on_training_env_invalidates_training_collector(self) -> None:
-        agent = SMDPPPO(19, len(HandoverAction), self.config)
+        agent = SMDPPPO(self.observation_size, len(HandoverAction), self.config)
         agent.collect_rollout(self.env, rollout_steps=1, reset_seed=11)
 
         agent.evaluate(self.env)
@@ -301,7 +310,7 @@ class PPOIntegrationTests(unittest.TestCase):
         self.assertIsNone(agent._collector_observation)
 
     def test_checkpoint_round_trip_preserves_prediction(self) -> None:
-        agent = SMDPPPO(19, len(HandoverAction), self.config)
+        agent = SMDPPPO(self.observation_size, len(HandoverAction), self.config)
         observation, _ = self.env.reset(options={"trace_index": 0})
         action_before = agent.predict(observation)
 
@@ -310,7 +319,11 @@ class PPOIntegrationTests(unittest.TestCase):
             agent.total_macro_steps = 7
             agent.save_checkpoint(path, extra={"tag": "test"})
 
-            restored = SMDPPPO(19, len(HandoverAction), self.config)
+            restored = SMDPPPO(
+                self.observation_size,
+                len(HandoverAction),
+                self.config,
+            )
             extra = restored.load_checkpoint(path)
             action_after = restored.predict(observation)
 
@@ -318,23 +331,45 @@ class PPOIntegrationTests(unittest.TestCase):
         self.assertEqual(restored.total_macro_steps, 7)
         self.assertEqual(extra, {"tag": "test"})
 
-    def test_legacy_two_action_checkpoint_is_inferred_and_evaluated(self) -> None:
-        legacy_agent = SMDPPPO(19, 2, self.config)
+    def test_numpy_model_dimensions_are_saved_safely_and_legacy_loads(self) -> None:
+        agent = SMDPPPO(
+            np.int64(self.observation_size),
+            np.int64(len(HandoverAction)),
+            self.config,
+        )
         with tempfile.TemporaryDirectory() as directory:
-            path = os.path.join(directory, "legacy_two_action.pt")
-            legacy_agent.save_checkpoint(path, extra={"tag": "legacy"})
+            path = os.path.join(directory, "numpy_dimensions.pt")
+            agent.save_checkpoint(path)
+
+            checkpoint = torch.load(path, weights_only=True)
+            self.assertIs(type(checkpoint["model_spec"]["observation_size"]), int)
+            self.assertIs(type(checkpoint["model_spec"]["action_size"]), int)
+
+            # Reproduce checkpoints written before dimensions were normalized.
+            checkpoint["model_spec"]["action_size"] = np.int64(
+                len(HandoverAction)
+            )
+            torch.save(checkpoint, path)
+            restored, _ = SMDPPPO.from_checkpoint(path)
+
+        self.assertEqual(restored.model.action_size, len(HandoverAction))
+
+    def test_two_action_checkpoint_without_model_spec_is_inferred(self) -> None:
+        binary_agent = SMDPPPO(19, 2, self.config)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "binary_without_spec.pt")
+            binary_agent.save_checkpoint(path, extra={"tag": "binary"})
             checkpoint = torch.load(path, weights_only=True)
             checkpoint.pop("model_spec")
             torch.save(checkpoint, path)
 
             restored, extra = SMDPPPO.from_checkpoint(path)
-            metrics = restored.evaluate(self.env)
 
         self.assertEqual(restored.model.observation_size, 19)
         self.assertEqual(restored.model.action_size, 2)
-        self.assertEqual(extra["tag"], "legacy")
-        self.assertEqual(metrics.episodes, 2)
-        self.assertEqual(metrics.wait_fraction, 0.0)
+        self.assertEqual(extra["tag"], "binary")
+        with self.assertRaises(ValueError):
+            restored.evaluate(self.env)
 
     def test_gamma_mismatch_is_rejected(self) -> None:
         mismatched = SMDPPPO(
@@ -358,7 +393,7 @@ class PPOIntegrationTests(unittest.TestCase):
             traces=[_trace("validation", 3.0)],
             gamma_per_second=0.99,
         )
-        agent = SMDPPPO(19, len(HandoverAction), self.config)
+        agent = SMDPPPO(self.observation_size, len(HandoverAction), self.config)
         events: list[dict] = []
 
         with tempfile.TemporaryDirectory() as directory:
@@ -375,7 +410,7 @@ class PPOIntegrationTests(unittest.TestCase):
             )
             restored, extra = SMDPPPO.from_checkpoint(
                 path,
-                observation_size=19,
+                observation_size=self.observation_size,
                 action_size=len(HandoverAction),
             )
 
@@ -417,6 +452,8 @@ class PPOIntegrationTests(unittest.TestCase):
                 directory,
                 reference_rate_mbps=10.0,
                 reference_rates_by_speed={30: 10.0},
+                reference_relative_rate_percent=80.0,
+                reference_relative_rates_by_speed={30: 80.0},
                 qos_rate_ratio=0.98,
                 qos_rate_ratio_per_speed=0.98,
                 checkpoint_extra={"dataset_manifest_sha256": "abc123"},
@@ -499,6 +536,45 @@ class PPOIntegrationTests(unittest.TestCase):
         self.assertTrue(records[1]["is_best_rlf"])
         self.assertFalse(records[2]["is_pareto"])
 
+    def test_qos_gate_requires_relative_rate_and_absolute_mbps(self) -> None:
+        agent = SMDPPPO(19, len(HandoverAction), self.config)
+        with tempfile.TemporaryDirectory() as directory:
+            manager = ValidationCheckpointManager(
+                directory,
+                reference_rate_mbps=10.0,
+                reference_rates_by_speed={30: 10.0},
+                reference_relative_rate_percent=80.0,
+                reference_relative_rates_by_speed={30: 80.0},
+                qos_rate_ratio=0.98,
+                qos_rate_ratio_per_speed=0.98,
+                qos_relative_rate_ratio=0.98,
+                qos_relative_rate_ratio_per_speed=0.98,
+            )
+            agent.total_macro_steps = 10
+            result = manager.record(
+                agent,
+                _evaluation_metrics(
+                    mean_return=1.0,
+                    rate_mbps=10.0,
+                    relative_rate_percent=75.0,
+                    rlf_time_percent=1.0,
+                    handover_failure_percent=2.0,
+                    ping_pong_percent=3.0,
+                    handover_attempts=4,
+                ),
+            )
+            summary = manager.summary()
+
+        self.assertFalse(result["qos_feasible"])
+        self.assertAlmostEqual(
+            result["aggregate_rate_ratio_to_3gpp"], 1.0
+        )
+        self.assertAlmostEqual(
+            result["aggregate_relative_rate_ratio_to_3gpp"],
+            75.0 / 80.0,
+        )
+        self.assertIsNone(summary["best_qos"])
+
     def test_progress_logger_prints_and_persists_json_lines(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "metrics.jsonl")
@@ -563,6 +639,12 @@ class PPOIntegrationTests(unittest.TestCase):
                 validation=(pairs[1],),
                 test=(pairs[2],),
             )
+            provenance_path = os.path.join(
+                directory,
+                "dataset_provenance.json",
+            )
+            with open(provenance_path, "w", encoding="utf-8") as output_file:
+                json.dump({"topology": "test"}, output_file)
 
             manifest = build_dataset_manifest(
                 directory,
@@ -575,8 +657,28 @@ class PPOIntegrationTests(unittest.TestCase):
                     "test": 1 / 3,
                 },
             )
+            repeated_manifest = build_dataset_manifest(
+                directory,
+                splits,
+                selected_speeds=[30],
+                split_seed=17,
+                split_fractions={
+                    "train": 1 / 3,
+                    "validation": 1 / 3,
+                    "test": 1 / 3,
+                },
+            )
             paths = write_dataset_manifest(directory, manifest)
 
+            self.assertEqual(manifest["schema_version"], 2)
+            self.assertEqual(
+                manifest["dataset_provenance"]["file"],
+                "dataset_provenance.json",
+            )
+            self.assertEqual(
+                len(manifest["dataset_provenance"]["sha256"]),
+                64,
+            )
             self.assertEqual(manifest["split_sizes"], {
                 "train": 1,
                 "validation": 1,
@@ -592,6 +694,14 @@ class PPOIntegrationTests(unittest.TestCase):
                 64,
             )
             self.assertEqual(len(paths["sha256"]), 64)
+            self.assertEqual(
+                manifest["dataset_content_sha256"],
+                repeated_manifest["dataset_content_sha256"],
+            )
+            self.assertEqual(
+                paths["dataset_content_sha256"],
+                manifest["dataset_content_sha256"],
+            )
             self.assertTrue(os.path.exists(paths["json"]))
             self.assertTrue(os.path.exists(paths["csv"]))
 

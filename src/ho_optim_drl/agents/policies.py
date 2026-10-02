@@ -19,7 +19,7 @@ class AlwaysHandoverPolicy:
 
     def predict(self, observation: np.ndarray) -> HandoverAction:
         del observation
-        return HandoverAction.HANDOVER
+        return HandoverAction.HO_C1
 
 
 class AlwaysStayPolicy:

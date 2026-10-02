@@ -76,15 +76,15 @@ PP (%)            = 100 * total ping-pong / total successful HO
 Pooling the event counts and durations avoids averaging unstable
 per-trajectory ratios with small denominators.
 
-The per-trajectory and aggregate files also report the fractions of `STAY`,
-`HANDOVER`, and `WAIT_50`. For a legacy two-action checkpoint, `WAIT_50` is
-necessarily 0%; only a newly trained three-action checkpoint can use it.
+The per-trajectory and aggregate files also report the fractions of `STAY` and
+all handover actions, plus counts `ho_c1_actions` through `ho_c10_actions`.
+The 3GPP baseline always uses `HO_C1`, i.e. the target that completed A3+TTT;
+only PPO may select another candidate.
 
 ## Current Test Result
 
-The values below are a historical two-action result and must not be presented
-as the result of the new `STAY/HANDOVER/WAIT_50` policy. Re-run the benchmark
-after training a three-action checkpoint.
+The values below are a historical two-action result. Re-run training and the
+benchmark on the final dataset before presenting them as final results.
 
 The current single-seed checkpoint on the 17 held-out test trajectories gives:
 

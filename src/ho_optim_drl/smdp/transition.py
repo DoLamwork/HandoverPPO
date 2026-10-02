@@ -9,6 +9,7 @@ from ho_optim_drl.data import RadioTrace
 from ho_optim_drl.protocol import HandoverEngine
 
 from .actions import HandoverAction
+from .multicandidate import TopologyCandidateObservationBuilder
 from .observation import ObservationBuilder
 from .reward import RewardBreakdown, RewardModel
 
@@ -26,6 +27,7 @@ class MacroTransition:
     discount: float
     terminated: bool
     truncated: bool
+    discounted_reward: RewardBreakdown | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -53,6 +55,11 @@ class MacroTransition:
             raise ValueError(
                 "A continuing transition must expose the next decision."
             )
+        if self.discounted_reward is None:
+            # Backwards-compatible construction for callers that create a
+            # transition directly. The production builder always supplies the
+            # time-consistent value explicitly.
+            object.__setattr__(self, "discounted_reward", self.reward)
 
         object.__setattr__(
             self,
@@ -174,13 +181,21 @@ class MacroTransitionBuilder:
         observation = self._current_observation
         self._apply_action(selected_action)
         accumulated_reward = RewardBreakdown()
+        discounted_reward = RewardBreakdown()
         duration_ticks = 0
+        gamma_tick = self.gamma_per_second ** (
+            self.engine.config.delta_t_ms / 1000.0
+        )
 
         while True:
             tick = self.engine.advance_one_tick()
             self.observation_builder.observe(tick)
-            accumulated_reward = (
-                accumulated_reward + self.reward_model.compute(tick)
+            tick_reward = self.reward_model.compute(tick)
+            accumulated_reward = accumulated_reward + tick_reward
+            # Tick zero has exponent zero. This makes the macro reward agree
+            # with primitive-time discounting regardless of macro boundaries.
+            discounted_reward = discounted_reward + tick_reward.scaled(
+                gamma_tick**duration_ticks
             )
             duration_ticks += 1
 
@@ -207,14 +222,27 @@ class MacroTransitionBuilder:
             discount=self.gamma_per_second**duration_seconds,
             terminated=self._terminated,
             truncated=False,
+            discounted_reward=discounted_reward,
         )
 
     def _apply_action(self, action: HandoverAction) -> None:
-        if action is HandoverAction.HANDOVER:
-            self.engine.start_handover()
-        elif action is HandoverAction.WAIT_50:
-            self.engine.wait_50()
-        elif action is HandoverAction.STAY:
+        if action is HandoverAction.STAY:
             self.engine.stay()
+        elif action.is_handover:
+            if not isinstance(
+                self.observation_builder,
+                TopologyCandidateObservationBuilder,
+            ):
+                if action is not HandoverAction.HO_C1:
+                    raise ValueError("Candidate actions require a candidate observation.")
+                self.engine.start_handover()
+                return
+            slot = action.candidate_slot
+            if slot is None:
+                raise RuntimeError("Handover action has no candidate slot.")
+            target = self.observation_builder.candidate_cells[slot]
+            if target is None:
+                raise ValueError("Selected candidate slot is unavailable.")
+            self.engine.start_handover(target_cell=target)
         else:
             raise ValueError(f"Unsupported handover action: {action}")

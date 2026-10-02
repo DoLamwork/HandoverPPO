@@ -14,13 +14,18 @@ class PolicyTests(unittest.TestCase):
 
         self.assertEqual(
             AlwaysHandoverPolicy().predict(observation),
-            HandoverAction.HANDOVER,
+            HandoverAction.HO_C1,
         )
         self.assertEqual(
             AlwaysStayPolicy().predict(observation),
             HandoverAction.STAY,
         )
-        self.assertEqual(HandoverAction.WAIT_50.value, 2)
+        self.assertEqual(
+            tuple(HandoverAction),
+            (HandoverAction.STAY,) + tuple(
+                HandoverAction(index) for index in range(1, 11)
+            ),
+        )
 
     def test_reward_breakdown_has_one_total(self) -> None:
         reward = RewardBreakdown(rate=-0.1, rlf=-2.0, ping_pong=-0.25)

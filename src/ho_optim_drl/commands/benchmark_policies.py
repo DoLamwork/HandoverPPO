@@ -32,14 +32,16 @@ def build_benchmark_policies(agent: SMDPPPO) -> tuple[BenchmarkPolicy, ...]:
     return (
         BenchmarkPolicy(
             "ppo",
-            lambda observation: agent.predict(
+            lambda observation, action_mask: agent.predict(
                 observation,
                 deterministic=True,
+                action_mask=action_mask,
             ),
+            uses_action_mask=True,
         ),
         BenchmarkPolicy(
             "3gpp_always_ho",
-            lambda observation: HandoverAction.HANDOVER,
+            lambda observation: HandoverAction.HO_C1,
         ),
     )
 
@@ -160,6 +162,7 @@ def main(root_path: str, args: Namespace) -> int:
     agent, checkpoint_extra = SMDPPPO.from_checkpoint(
         checkpoint_path,
         device=args.device,
+        action_size=len(HandoverAction),
     )
     protocol_config = load_protocol_config(data_dir, checkpoint_extra)
     if args.split_seed is None:
@@ -220,6 +223,7 @@ def main(root_path: str, args: Namespace) -> int:
             trace_pairs=selected_pairs,
             gamma_per_second=agent.config.gamma_per_second,
         )
+        env.validate_checkpoint_objective(checkpoint_extra)
         all_rows.extend(
             benchmark_policy(
                 env,
@@ -276,7 +280,7 @@ def main(root_path: str, args: Namespace) -> int:
     print("\nAggregate benchmark")
     print(
         "policy             relative(%)  HOF(%)  RLF-time(%)  PP(%)  "
-        "HO-action(%)  WAIT_50(%)  return"
+        "HO-action(%)  STAY(%)  return"
     )
     for row in aggregate_rows:
         print(
@@ -286,7 +290,7 @@ def main(root_path: str, args: Namespace) -> int:
             f"{row['rlf_time_percent']:>13.3f}"
             f"{row['ping_pong_percent']:>7.3f}"
             f"{row['handover_action_percent']:>13.1f}"
-            f"{row['wait_action_percent']:>12.1f}"
+            f"{row['stay_action_percent']:>9.1f}"
             f"{row['mean_controlled_return']:>10.3f}"
         )
     print("\nPaired comparison versus 3gpp_always_ho")

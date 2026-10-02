@@ -79,11 +79,11 @@ def run(argv=None) -> int:
         help="Fraction of trajectories per speed reserved for final testing.",
     )
     train_parser.add_argument("--total-macro-steps", type=int, default=100_000)
-    train_parser.add_argument("--rollout-steps", type=int, default=512)
-    train_parser.add_argument("--batch-size", type=int, default=64)
-    train_parser.add_argument("--update-epochs", type=int, default=10)
+    train_parser.add_argument("--rollout-steps", type=int, default=1024)
+    train_parser.add_argument("--batch-size", type=int, default=128)
+    train_parser.add_argument("--update-epochs", type=int, default=4)
     train_parser.add_argument("--hidden-sizes", type=int, nargs="+", default=[64, 64])
-    train_parser.add_argument("--learning-rate", type=float, default=3e-4)
+    train_parser.add_argument("--learning-rate", type=float, default=5e-5)
     train_parser.add_argument("--clip-range", type=float, default=0.2)
     train_parser.add_argument("--value-coefficient", type=float, default=0.5)
     train_parser.add_argument("--entropy-coefficient", type=float, default=0.01)
@@ -91,7 +91,7 @@ def run(argv=None) -> int:
     train_parser.add_argument("--gamma-per-second", type=float, default=0.99)
     train_parser.add_argument("--lambda-per-second", type=float, default=0.95)
     train_parser.add_argument("--target-kl", type=float, default=0.03)
-    train_parser.add_argument("--evaluation-interval", type=int, default=5_000)
+    train_parser.add_argument("--evaluation-interval", type=int, default=10_240)
     train_parser.add_argument(
         "--qos-rate-ratio",
         type=float,
@@ -110,6 +110,18 @@ def run(argv=None) -> int:
         ),
     )
     train_parser.add_argument(
+        "--qos-relative-rate-ratio",
+        type=float,
+        default=0.98,
+        help="Minimum aggregate trajectory-relative-rate ratio to 3GPP.",
+    )
+    train_parser.add_argument(
+        "--qos-relative-rate-ratio-per-speed",
+        type=float,
+        default=0.98,
+        help="Minimum relative-rate ratio to 3GPP at every selected speed.",
+    )
+    train_parser.add_argument(
         "--progress-interval",
         type=int,
         default=50,
@@ -117,6 +129,29 @@ def run(argv=None) -> int:
     )
     train_parser.add_argument("--seed", type=int, default=17)
     train_parser.add_argument("--split-seed", type=int, default=17)
+    train_parser.add_argument(
+        "--experiment-id",
+        default=None,
+        help="Stable ablation ID; defaults to the output directory name.",
+    )
+    train_parser.add_argument(
+        "--parent-id",
+        default=None,
+        help="Parent experiment ID used for the one-change comparison.",
+    )
+    train_parser.add_argument(
+        "--changed-factor",
+        default="baseline_contract",
+        help="Single preregistered factor changed from the parent.",
+    )
+    train_parser.add_argument(
+        "--skip-final-test",
+        action="store_true",
+        help=(
+            "Do not instantiate or evaluate the held-out test split; use for "
+            "development ablations."
+        ),
+    )
     train_parser.add_argument("--device", default="cpu")
     train_parser.add_argument(
         "--output-dir",

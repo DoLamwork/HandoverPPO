@@ -19,12 +19,18 @@ class RolloutTensors:
     old_values: torch.Tensor
     returns: torch.Tensor
     advantages: torch.Tensor
+    action_masks: torch.Tensor | None = None
 
 
 class SMDPRolloutBuffer:
     """Fixed-capacity rollout buffer with one discount per macro-step."""
 
-    def __init__(self, capacity: int, observation_shape: tuple[int, ...]) -> None:
+    def __init__(
+        self,
+        capacity: int,
+        observation_shape: tuple[int, ...],
+        action_size: int | None = None,
+    ) -> None:
         if capacity <= 0:
             raise ValueError("capacity must be positive.")
         if len(observation_shape) != 1 or observation_shape[0] <= 0:
@@ -51,6 +57,11 @@ class SMDPRolloutBuffer:
         self.returns = np.empty(capacity, dtype=np.float32)
         self.size = 0
         self._advantages_ready = False
+        self.action_masks = (
+            np.ones((capacity, action_size), dtype=np.bool_)
+            if action_size is not None
+            else None
+        )
 
     @property
     def full(self) -> bool:
@@ -70,6 +81,7 @@ class SMDPRolloutBuffer:
         terminated: bool,
         truncated: bool,
         trace_id: str | None = None,
+        action_mask: np.ndarray | None = None,
     ) -> None:
         """Store one macro-transition."""
         if self.full:
@@ -102,6 +114,17 @@ class SMDPRolloutBuffer:
             raise ValueError("trace_id must be non-empty when provided.")
 
         index = self.size
+        if self.action_masks is not None:
+            if action_mask is None:
+                raise ValueError("A masked rollout requires an action mask.")
+            mask = np.asarray(action_mask, dtype=np.bool_)
+            if mask.shape != self.action_masks.shape[1:] or not mask.any():
+                raise ValueError("Invalid rollout action mask.")
+            if not 0 <= action < len(mask) or not mask[action]:
+                raise ValueError("Cannot store an action excluded by its mask.")
+            self.action_masks[index] = mask
+        elif action_mask is not None:
+            raise ValueError("Declare action_size before storing action masks.")
         self.observations[index] = observation
         self.actions[index] = action
         self.rewards[index] = reward
@@ -205,4 +228,13 @@ class SMDPRolloutBuffer:
                 device=device,
             ),
             advantages=advantages,
+            action_masks=(
+                torch.as_tensor(
+                    self.action_masks[: self.size],
+                    dtype=torch.bool,
+                    device=device,
+                )
+                if self.action_masks is not None
+                else None
+            ),
         )

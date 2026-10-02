@@ -194,8 +194,10 @@ credentials
 /data/UAV_single_runs/
 /data/UAV_data_100m/
 /data/UAV_data_300m/
-/data/UAV_data_100m_grid100m/
-/data/uav_100m_grid100m_dev_processed/
+/data/UAV_data_100m_grid100m/*
+!/data/UAV_data_100m_grid100m/dataset_provenance.json
+/data/uav_100m_grid100m_dev_processed/*
+!/data/uav_100m_grid100m_dev_processed/dataset_provenance.json
 /data_generator/outputs/
 /data_generator/.venv/
 

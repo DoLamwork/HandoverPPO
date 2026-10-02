@@ -6,11 +6,10 @@ standard Gymnasium API.
 ## Spaces
 
 ```text
-action_space      = Discrete(3)
+action_space      = Discrete(11)
 0                 = STAY
-1                 = HANDOVER
-2                 = WAIT_50
-observation_space = Box(shape=(19,), dtype=float32)
+1..10             = HO_C1..HO_C10
+observation_space = Box(shape=(109,), dtype=float32)
 ```
 
 An observation is returned only after A3 has remained valid for TTT. Calling
@@ -18,10 +17,15 @@ An observation is returned only after A3 has remained valid for TTT. Calling
 the next completed A3 event or the end of the trajectory.
 
 `STAY` rejects and suppresses the current serving-target event until A3 leaves
-or the target changes. `HANDOVER` starts handover to the latched A3 target.
-`WAIT_50` advances five 10 ms radio ticks without suppressing that event, then
-offers it again if the same serving-target pair is still A3-valid. If it is no
-longer valid, the wait is cancelled and normal A3/TTT processing resumes.
+or the target changes. `HO_Ci` starts handover to candidate slot `Ci`, frozen
+when the observation is built. `C1` is always the latched A3 target. The other
+slots prioritize alternate sectors at the serving site, all sectors of the two
+strongest first-ring neighbor sites, then the strongest remaining measured
+cells. Candidate cells are unique and never equal to the serving cell.
+
+The environment exposes `action_mask()`. Invalid padded slots are never sampled
+or used in a PPO update. The 21-cell UAV dataset has ten valid candidates at
+each decision, so all 11 actions are normally valid.
 
 ## Dataset setup
 
@@ -56,7 +60,7 @@ observation, info = env.reset(seed=123)
 terminated = False
 truncated = False
 while not (terminated or truncated):
-    action = env.action_space.sample()
+    action = env.action_space.sample(mask=env.action_mask().astype("int8"))
     observation, reward, terminated, truncated, info = env.step(action)
 ```
 
@@ -68,6 +72,7 @@ while not (terminated or truncated):
 - current and next A3 decision metadata;
 - cumulative episode return, macro-step count, and duration;
 - final protocol metrics when the trace terminates.
+- the frozen `candidate_cells`, selected target, and current/next action masks.
 
 `reset(options={"trace_index": i})` or
 `reset(options={"trace_id": "30kmh_0"})` selects a specific trajectory for

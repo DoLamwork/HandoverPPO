@@ -1,0 +1,185 @@
+{
+  "routes": 24,
+  "route_ids": [
+    "30kmh_237",
+    "30kmh_47",
+    "30kmh_74",
+    "30kmh_313",
+    "30kmh_352",
+    "30kmh_196",
+    "50kmh_107",
+    "50kmh_153",
+    "50kmh_228",
+    "50kmh_18",
+    "50kmh_90",
+    "50kmh_148",
+    "70kmh_32",
+    "70kmh_16",
+    "70kmh_74",
+    "70kmh_111",
+    "70kmh_179",
+    "70kmh_127",
+    "90kmh_0",
+    "90kmh_68",
+    "90kmh_98",
+    "90kmh_75",
+    "90kmh_82",
+    "90kmh_100"
+  ],
+  "stats": {
+    "3gpp": {
+      "decisions": 939,
+      "actions": {
+        "1": 939
+      },
+      "all_masks_11": true,
+      "mean_probabilities": [
+        0.4686892628669739,
+        0.5255841016769409,
+        0.0006909518269822001,
+        0.0004899048362858593,
+        0.0007316881092265248,
+        0.0006310018361546099,
+        0.000750591279938817,
+        0.0005916174850426614,
+        0.0006043281173333526,
+        0.0006497509311884642,
+        0.0005868479493074119
+      ],
+      "prob_alt_percentiles": [
+        0.0014661834575235844,
+        0.005462305620312691,
+        0.009669729880988598,
+        0.011421788912266494,
+        0.01254311390221119
+      ],
+      "means": {
+        "history_ms": 40,
+        "valid_alt_now": 0.26198083067092653,
+        "c1_suitable": 0.9542066027689031,
+        "unsafe_alt_frac": 0.9708910188143416,
+        "alt_better_now": 0.08519701810436635,
+        "c1_future_safe": 0.8816631130063965,
+        "alt_future_safe_frac": 0.0289031035299692,
+        "c1_above10": 0.039403620873269436,
+        "serving_above10": 0.0010649627263045794,
+        "n310": 0.13386581469648562,
+        "t310": 0.0926517571884984
+      },
+      "history_ms_values": [
+        40
+      ],
+      "duration_seconds": {
+        "1": {
+          "n": 939,
+          "percentiles_50_90_95_99_max": [
+            0.7000000000000001,
+            3.564000000000001,
+            5.373999999999996,
+            10.294600000000003,
+            22.16
+          ]
+        }
+      }
+    },
+    "ppo": {
+      "decisions": 912,
+      "actions": {
+        "0": 159,
+        "1": 753
+      },
+      "all_masks_11": true,
+      "mean_probabilities": [
+        0.4694308936595917,
+        0.5249309539794922,
+        0.0006804417935200036,
+        0.00048236604197882116,
+        0.0007203332497738302,
+        0.0006212102598510683,
+        0.0007389134261757135,
+        0.0005825973930768669,
+        0.0005949250189587474,
+        0.0006395681411959231,
+        0.0005778578342869878
+      ],
+      "prob_alt_percentiles": [
+        0.0013562239473685622,
+        0.0053720660507678986,
+        0.009689282812178134,
+        0.01144133542664349,
+        0.01254311390221119
+      ],
+      "means": {
+        "history_ms": 40,
+        "valid_alt_now": 0.27960526315789475,
+        "c1_suitable": 0.9484649122807017,
+        "unsafe_alt_frac": 0.9689327485380118,
+        "alt_better_now": 0.09539473684210527,
+        "c1_future_safe": 0.8759604829857299,
+        "alt_future_safe_frac": 0.03158921819734114,
+        "c1_above10": 0.04057017543859649,
+        "serving_above10": 0.0010964912280701754,
+        "n310": 0.13212719298245615,
+        "t310": 0.17105263157894737
+      },
+      "history_ms_values": [
+        40
+      ],
+      "duration_seconds": {
+        "0": {
+          "n": 159,
+          "percentiles_50_90_95_99_max": [
+            0.62,
+            2.0380000000000007,
+            3.081,
+            4.862799999999989,
+            6.65
+          ]
+        },
+        "1": {
+          "n": 753,
+          "percentiles_50_90_95_99_max": [
+            0.78,
+            3.85,
+            5.649999999999999,
+            11.279200000000001,
+            22.16
+          ]
+        }
+      }
+    }
+  },
+  "counterfactual": {
+    "states": 86,
+    "horizon_s": 1,
+    "continuation": "always HO_C1 at subsequent decision",
+    "coverage": "up to 4 states per route at decisions 0,10,20,30; train only",
+    "any_alt_rate_better_frac": 0.13953488372093023,
+    "any_alt_rate_better_no_more_hof_rlf_pp_frac": 0.023255813953488372,
+    "any_alt_old_reward_better_frac": 0.09302325581395349,
+    "best_rate_action_counts": {
+      "0": 23,
+      "1": 56,
+      "2": 5,
+      "7": 1,
+      "10": 1
+    },
+    "best_old_reward_action_counts": {
+      "0": 48,
+      "1": 34,
+      "5": 1,
+      "6": 1,
+      "7": 1,
+      "10": 1
+    }
+  },
+  "audit_date_local": "2026-10-02",
+  "method_notes": [
+    "Diagnostic only; 24 training trajectories sampled without replacement, 6 per speed 30/50/70/90, numpy default_rng(17), from saved training manifest.",
+    "Checkpoint smdp_ppo_final.pt is the selected best_qos checkpoint at 280576 steps, not last training weights at 300000 steps.",
+    "Each candidate occurrence is one slot at one visited decision. Unsuitable means instantaneous SINR <= Qin; it is not proof that handover must fail 90 ms later.",
+    "Counterfactual: deepcopy the same complete protocol state; try STAY and ten frozen targets; simulate 100 ticks (1 second); use HO_C1 at any subsequent A3 decision for every branch.",
+    "Counterfactual opportunity fractions compare alternatives with HO_C1. No-more-hof-rlf-pp checks counts only, not RLF duration. Short horizon and sampled baseline-state distribution do not estimate full-dataset optimal policy.",
+    "Future SINR +90 ms is diagnostic only and never supplied to model observations."
+  ]
+}

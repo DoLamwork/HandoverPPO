@@ -16,6 +16,7 @@ from ho_optim_drl.data import (
     RadioTrace,
     TracePair,
     discover_trace_pairs,
+    load_cell_topology,
     load_radio_trace,
 )
 from ho_optim_drl.protocol import DecisionPoint, HandoverEngine
@@ -28,12 +29,13 @@ from ho_optim_drl.smdp import (
     MacroTransition,
     MacroTransitionBuilder,
     RewardBreakdown,
+    TopologyCandidateObservationBuilder,
 )
 
 
 class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
     """
-    STAY/HANDOVER/WAIT_50 environment evaluated at completed A3 events.
+    STAY plus ten topology-aware target actions at completed A3 events.
 
     A reset advances through the uncontrollable trace prefix to the first A3
     decision. A step executes one action and advances internally to the next
@@ -64,10 +66,16 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
         self._traces: tuple[RadioTrace, ...] | None = None
         self._trace_pairs: tuple[TracePair, ...] | None = None
         self._configure_sources(traces, data_dir, trace_pairs)
+        topology = (
+            load_cell_topology(self._data_dir)
+            if self._data_dir is not None
+            else None
+        )
 
-        observation_builder = A3ObservationBuilder(
+        observation_builder = TopologyCandidateObservationBuilder(
             self.config,
             observation_config,
+            topology=topology,
         )
         reward_model = HandoverRewardModel(self.config, reward_config)
         self.transition_builder = MacroTransitionBuilder(
@@ -89,6 +97,7 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
         self._episode_started = False
         self._known_no_decision_sources: set[int] = set()
         self._episode_return = 0.0
+        self._episode_discount = 1.0
         self._episode_macro_steps = 0
         self._episode_duration_ticks = 0
 
@@ -109,6 +118,59 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
     def current_trace(self) -> RadioTrace | None:
         return self._current_trace
 
+    @property
+    def objective_spec(self) -> dict[str, Any]:
+        """Return checkpoint/report metadata that fixes action semantics."""
+        builder = self.transition_builder.observation_builder
+        return {
+            "version": "a3_topology109_v1",
+            "trigger": "completed_a3_ttt",
+            "candidate_policy": builder.CANDIDATE_POLICY,
+            "observation_size": builder.size,
+            "observation_features": list(builder.feature_names),
+            "action_names": [action.name for action in HandoverAction],
+            "reward": "legacy_handover_reward_v1",
+            "discount_mode": "intra_macro_time_consistent_v1",
+        }
+
+    def validate_checkpoint_objective(
+        self,
+        checkpoint_extra: dict[str, Any],
+    ) -> None:
+        """Reject checkpoints that declare a different policy interface."""
+        saved = checkpoint_extra.get("objective")
+        if saved is None:
+            return
+        current = self.objective_spec
+        fields = (
+            "version",
+            "candidate_policy",
+            "observation_size",
+            "observation_features",
+            "action_names",
+        )
+        mismatches = [
+            field_name
+            for field_name in fields
+            if saved.get(field_name) != current.get(field_name)
+        ]
+        if mismatches:
+            raise ValueError(
+                "Checkpoint objective schema differs from environment in: "
+                + ", ".join(mismatches)
+                + ". Use a checkpoint trained for this exact observation, "
+                "candidate ordering, and action schema."
+            )
+
+    def action_mask(self) -> np.ndarray:
+        """Return actions valid for the currently frozen candidate mapping."""
+        if self.transition_builder.current_observation is None:
+            return np.zeros(self.action_space.n, dtype=np.bool_)
+        builder = self.transition_builder.observation_builder
+        if not isinstance(builder, TopologyCandidateObservationBuilder):
+            return np.ones(self.action_space.n, dtype=np.bool_)
+        return builder.action_mask()
+
     def reset(
         self,
         *,
@@ -121,6 +183,7 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
         self._current_source_index = None
         self._current_trace = None
         self._episode_return = 0.0
+        self._episode_discount = 1.0
         self._episode_macro_steps = 0
         self._episode_duration_ticks = 0
 
@@ -162,9 +225,27 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
         if not self.action_space.contains(action):
             raise ValueError(f"Action {action!r} is outside {self.action_space}.")
 
+        action = HandoverAction(int(action))
+        action_mask = self.action_mask()
+        if not action_mask[int(action)]:
+            raise ValueError("Selected candidate slot is unavailable.")
         decision = self.engine.decision_point
-        transition = self.transition_builder.step(HandoverAction(int(action)))
-        self._episode_return += transition.reward.total
+        candidate_cells = tuple(
+            self.transition_builder.observation_builder.candidate_cells
+        )
+        selected_target = (
+            candidate_cells[action.candidate_slot]
+            if action.candidate_slot is not None
+            else None
+        )
+        transition = self.transition_builder.step(action)
+        discounted_reward = transition.discounted_reward
+        if discounted_reward is None:  # Defensive for legacy/manual objects.
+            discounted_reward = transition.reward
+        self._episode_return += (
+            self._episode_discount * discounted_reward.total
+        )
+        self._episode_discount *= transition.discount
         self._episode_macro_steps += 1
         self._episode_duration_ticks += transition.duration_ticks
         observation = (
@@ -173,9 +254,21 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
             else np.zeros(self.observation_space.shape, dtype=np.float32)
         )
         info = self._step_info(transition, decision)
+        info.update(
+            action_kind="handover" if action.is_handover else "stay",
+            applied_action_mask=action_mask.tolist(),
+            candidate_cells=list(candidate_cells),
+            selected_target_cell=selected_target,
+            action_mask=self.action_mask().tolist(),
+            next_candidate_cells=(
+                list(self.transition_builder.observation_builder.candidate_cells)
+                if transition.next_observation is not None
+                else []
+            ),
+        )
         return (
             observation,
-            float(transition.reward.total),
+            float(discounted_reward.total),
             bool(transition.terminated),
             bool(transition.truncated),
             info,
@@ -310,6 +403,10 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
             ),
             "skipped_no_decision_traces": tuple(skipped),
             "decision": self._decision_dict(self.engine.decision_point),
+            "action_mask": self.action_mask().tolist(),
+            "candidate_cells": list(
+                self.transition_builder.observation_builder.candidate_cells
+            ),
         }
         info.update(self._source_metadata(source_index))
         return info
@@ -327,6 +424,9 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
             ),
             "action": transition.action.name.lower(),
             "reward": self._reward_dict(transition.reward),
+            "discounted_reward": self._reward_dict(
+                transition.discounted_reward or transition.reward
+            ),
             "duration_ticks": transition.duration_ticks,
             "duration_seconds": transition.duration_seconds,
             "discount": transition.discount,

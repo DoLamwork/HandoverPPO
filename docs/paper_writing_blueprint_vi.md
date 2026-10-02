@@ -1,12 +1,12 @@
 # Khung hiểu project và viết bài báo về handover UAV bằng SMDP-PPO
 
-Ngày đánh giá: 13/09/2026. Cơ sở: bản `2026_conf_PPO_Handover_A2G (6).pdf`, mã và kết quả đang có trong workspace. Đây là hướng dẫn xây dựng lập luận và kế hoạch bằng chứng; không phải bản thảo đã hoàn thiện hoặc kết luận về khả năng được chấp nhận tại một hội nghị cụ thể.
+Ngày đánh giá ban đầu: 13/09/2026; cập nhật thiết kế multi-candidate: 26/09/2026. Cơ sở: bản `2026_conf_PPO_Handover_A2G (6).pdf`, mã và kết quả đang có trong workspace. Đây là hướng dẫn xây dựng lập luận và kế hoạch bằng chứng; không phải bản thảo đã hoàn thiện hoặc kết luận về khả năng được chấp nhận tại một hội nghị cụ thể.
 
 Ưu tiên theo yêu cầu của tác giả: hiểu đúng project, xây dựng bài viết có thể bảo vệ về khoa học, sau đó mới rút xuống 6 trang, tính cả tài liệu tham khảo. Các ghi chú biên tập nằm trong PDF được xem là nội dung bản thảo để đánh giá.
 
 ## 1. Kết luận định hướng
 
-Câu chuyện phù hợp nhất là **học chấp nhận hoặc từ chối cơ hội handover do A3 tạo ra, có tính đến thời gian vật lý giữa các quyết định, để điều chỉnh đánh đổi giữa estimated rate và độ ổn định kết nối của UAV**.
+Câu chuyện phù hợp nhất của code hiện tại là **dùng A3+TTT để trigger một policy học đồng thời quyết định có handover hay không và chọn target trong shortlist topology-aware, có tính đến thời gian vật lý giữa các quyết định**.
 
 Project có môi trường giao thức, đặc trưng nhân quả, cách gom chuyển tiếp và PPO tương đối rõ ràng. Tuy nhiên, các kết quả hiện tại nên được coi là kết quả sơ bộ. Vấn đề đáng sửa nhất trước khi chốt thí nghiệm là bộ lấy mẫu huấn luyện: tập train khai báo 600 quỹ đạo, nhưng nhật ký chỉ ghi nhận 162 quỹ đạo thực sự được sử dụng.
 
@@ -26,9 +26,9 @@ Không đưa “optimal”, “6G”, “uncertainty-aware”, “Hedge Algorith
 
 ### 2.1. Ranh giới của bài toán
 
-UAV bay theo quỹ đạo có sẵn. Tại mỗi mẫu thời gian, dữ liệu cung cấp RSRP và SINR của các cell. Agent điều khiển việc chấp nhận một cơ hội handover; nó không điều khiển quỹ đạo UAV, công suất phát, anten, phân bổ tài nguyên, cell load hoặc bộ lập lịch.
+UAV bay theo quỹ đạo có sẵn. Tại mỗi mẫu thời gian, dữ liệu cung cấp RSRP và SINR của các cell. Agent điều khiển việc từ chối A3 hoặc handover tới một trong 10 candidate cell; nó không điều khiển quỹ đạo UAV, công suất phát, anten, phân bổ tài nguyên, cell load hoặc bộ lập lịch.
 
-Tập UAV đang được dùng có 21 cột đo vô tuyến. Thư mục nguồn mà tác giả xác nhận chứa 2.120 CSV, tương ứng 1.060 cặp RSRP/SINR. Thư mục đó hiện không chứa mã sinh kênh, quỹ đạo, cấu hình anten hoặc manifest mô phỏng. Vì vậy:
+Tập UAV đang được dùng có 21 cột đo vô tuyến. Thư mục nguồn mà tác giả xác nhận chứa 2.120 CSV, tương ứng 1.060 cặp RSRP/SINR. Metadata provenance hiện ghi topology 7 site/21 sector và liên kết tới source generator lịch sử; vẫn phải báo cáo riêng cấu hình sinh trace 4 GHz/20 MHz và runtime 2,1 GHz/10 MHz.
 
 - Có thể xác minh số trace, số cell và các giá trị đầu vào.
 - Chưa thể xác minh độc lập các mô tả LOS/NLOS, correlation distance, Doppler, Rician K, công suất phát và anten 8×4 chỉ từ các CSV này.
@@ -44,8 +44,8 @@ flowchart TD
   B --> C[Bộ mô phỏng giao thức chạy từng mẫu 10 ms]
   C --> D{Có cơ hội A3 hoàn tất TTT?}
   D -->|Chưa| C
-  D -->|Có| E[Tạo observation 19 đặc trưng từ hiện tại và quá khứ]
-  E --> F[Actor chọn STAY, HANDOVER hoặc WAIT_50]
+  D -->|Có| E[Tạo shortlist và observation 109 đặc trưng causal]
+  E --> F[Actor chọn STAY hoặc HO_C1..HO_C10]
   F --> G[Giao thức tiến triển tới quyết định tiếp theo hoặc cuối trace]
   G --> H[Gom reward và thời lượng của chuyển tiếp]
   H --> E
@@ -64,22 +64,21 @@ Ví dụ minh họa, không phải kết quả thực nghiệm: một quyết đ
 
 Ở 200 test trace thuộc các tốc độ đã biết, PPO hiện có trung bình 30,11 quyết định trên mỗi trace 6.000 mẫu. Điều này cho thấy actor được gọi thưa hơn nhịp vô tuyến. Nó chưa chứng minh tốc độ chạy hoặc hiệu quả học tăng tương ứng; simulator vẫn xử lý các mẫu bên trong.
 
-### 2.4. Quyền hạn của STAY, HANDOVER và WAIT_50
+### 2.4. Quyền hạn của STAY và HO_C1..HO_C10
 
 | Thành phần | Hành vi thực tế | Hệ quả đối với cách viết |
 |---|---|---|
-| Chọn ứng viên | Logic đo RSRP chọn ứng viên; tại cơ hội A3 hợp lệ, ứng viên là cell mạnh nhất phù hợp với logic hiện tại | Agent không giải bài toán chọn tùy ý một trong 21 cell |
-| HANDOVER | Chốt target; bắt đầu preparation rồi execution | Quyết định có hậu quả kéo dài, không phải đổi cell tức thời |
+| Chọn ứng viên | `C1` là target A3; slot còn lại ưu tiên sector cùng site, hai site vòng một mạnh nhất, rồi cell còn lại theo RSRP | Agent chọn trong shortlist 10 cell, không chọn trực tiếp tùy ý từ 21 cell |
+| HO_Ci | Chốt target ở slot `Ci`; bắt đầu preparation rồi execution | Quyết định có hậu quả kéo dài, không phải đổi cell tức thời |
 | STAY | Từ chối và khóa lại sự kiện serving-target vừa xét đến khi A3 rời hoặc target đổi | Không diễn giải là “đợi 10 ms rồi cân nhắc lại” |
-| WAIT_50 | Giữ event đang xét, tiến đúng 50 ms rồi hỏi lại nếu serving, target và A3 vẫn hợp lệ | Tạo lựa chọn trì hoãn ngắn có kiểm soát; không đồng nghĩa STAY và không chạy lại TTT |
 | A3/TTT | Dùng các tham số cấu hình cố định | Không gọi phương pháp là học tối ưu trực tiếp TTT/Hys/CIO |
 | Sau STAY | RLM và các timer vẫn tiếp tục chạy | Có nguy cơ ở lại serving cell quá lâu trước khi có cơ hội quyết định mới |
 
-Cần đưa rõ cả cơ chế khóa sự kiện sau STAY và tái xét sau 50 ms của WAIT_50 vào mô tả phương pháp. Đây là một phần của không gian điều khiển và có thể ảnh hưởng đáng kể tới kết quả.
+Cần đưa rõ cơ chế khóa sự kiện sau STAY vào mô tả phương pháp. Đây là một phần của không gian điều khiển và có thể ảnh hưởng đáng kể tới kết quả.
 
 Mã đối chiếu: [engine.py](C:/Project/HandoverOptimDRL/src/ho_optim_drl/protocol/engine.py:125), [primitives.py](C:/Project/HandoverOptimDRL/src/ho_optim_drl/protocol/primitives.py:120).
 
-### 2.5. Observation 19 chiều
+### 2.5. Observation 109 chiều
 
 | Nhóm | Số chiều | Câu hỏi mà agent được hỗ trợ trả lời |
 |---|---:|---|
@@ -89,9 +88,13 @@ Mã đối chiếu: [engine.py](C:/Project/HandoverOptimDRL/src/ho_optim_drl/pro
 | RLM: khoảng cách tới Qout/Qin, N310, trạng thái và tiến độ T310 | 5 | Có dấu hiệu mất liên kết đang tới gần không? |
 | Lịch sử HO: residence, lần HO trước, previous cell, số HO gần đây | 4 | Quyết định có nguy cơ dẫn tới quay lại cell cũ hoặc chuyển quá dày không? |
 
+19 chiều trên là block của `C1`. Mỗi `C2..C10` có 10 feature về spectral
+efficiency, delta rate, A3-margin statistics/trend, SINR trend, Qin gap và
+previous-cell flag; tổng cộng `19 + 9×10 = 109`.
+
 Không có input vận tốc, vị trí hoặc độ cao một cách tường minh. Có thể nói thiết kế không yêu cầu đầu vào vận tốc; chưa thể kết luận nó đã suy ra vận tốc chính xác hoặc bất biến với mọi vận tốc.
 
-Observation dùng quá khứ và hiện tại, nhưng **tính nhân quả không đồng nghĩa với tính Markov**. Hướng bay, vị trí và trạng thái kênh tiềm ẩn không được biểu diễn đầy đủ. Cách viết thận trọng: dùng một biểu diễn quan sát hữu hạn làm xấp xỉ trạng thái tại các thời điểm quyết định. Không tuyên bố đã chứng minh một SMDP quan sát đầy đủ trên vector 19 chiều.
+Observation dùng quá khứ và hiện tại, nhưng **tính nhân quả không đồng nghĩa với tính Markov**. Hướng bay, vị trí và trạng thái kênh tiềm ẩn không được biểu diễn đầy đủ. Cách viết thận trọng: dùng một biểu diễn quan sát hữu hạn làm xấp xỉ trạng thái tại các thời điểm quyết định. Không tuyên bố đã chứng minh một SMDP quan sát đầy đủ trên vector 109 chiều.
 
 ### 2.6. Reward thực tế và ý nghĩa vật lý
 
@@ -217,7 +220,7 @@ HOF giảm không tự động chứng minh kết nối tốt hơn: agent có th
 | Bắt buộc | Cách gọi 3GPP và RLM | Có nhiều proxy, không phải NR stack đầy đủ | Gọi baseline A3-based/3GPP-inspired; công bố Qin/Qout là SINR proxy |
 | Bắt buộc | Chưa phân tích RLF time dù đã định nghĩa | HOF/PP giảm có thể che chi phí STAY quá lâu | Thêm RLF time và số sự kiện trên đơn vị thời gian |
 | Bắt buộc | Một seed, baseline còn yếu | Chưa tách khả năng học khỏi may mắn và cấu hình A3 chưa phù hợp | Thêm seeds, tuned A3, heuristic gate và các ablation trọng tâm |
-| Cần rõ | Vector 19 chiều gọi là state Markov | Chưa có chứng minh đầy đủ thông tin trạng thái | Gọi observation/approximate state và nêu giới hạn quan sát |
+| Cần rõ | Vector 109 chiều gọi là state Markov | Chưa có chứng minh đầy đủ thông tin trạng thái | Gọi observation/approximate state và nêu giới hạn quan sát |
 | Cần rõ | Điều kiện A3 trong draft mô tả nhiều neighbor và ngưỡng đơn | Code xét ứng viên hiện tại và giữ trạng thái trong deadband | Mô tả entering, leaving, cách reset TTT khi target đổi theo code |
 | Cần rõ | “AMC ceiling, if enforced” | Câu văn chưa xác định mô hình thực tế | Rate hiện dùng SINR raw; clipping đặc trưng không phải mô hình AMC |
 | Cần rõ | Source trace không kèm generator | Không kiểm chứng được các giả thiết hình học/kênh đã ghi | Bổ sung generator, cấu hình và seed hoặc thu hẹp mô tả tới trace-driven setting |
@@ -238,7 +241,7 @@ PPO và GAE là phương pháp đã có; temporal abstraction/SMDP cũng là n�
 
 Phần có thể phát triển thành đóng góp của bài là cách đặt bài toán và kiểm chứng nó trong môi trường UAV cụ thể:
 
-1. **Tích hợp quyết định tại cơ hội A3:** cơ chế categorical admission/defer với target latching, event suppression sau STAY và tái xét sau WAIT_50, trên một engine giao thức chung cho các policy.
+1. **Tích hợp quyết định tại cơ hội A3:** cơ chế binary admission với target latching và event suppression sau STAY, trên một engine giao thức chung cho các policy.
 2. **Thiết kế học theo thời gian và trạng thái giao thức:** observation nhân quả kết hợp chất lượng liên kết, RLM và lịch sử HO; return/advantage tính đến thời lượng giữa các quyết định.
 3. **Bằng chứng về đánh đổi và vận tốc ngoài miền học:** đánh giá đồng thời rate, HOF, RLF time, PP trên trace ghép cặp, kèm ablation và đánh giá vận tốc chưa dùng trong train/validation.
 
@@ -270,7 +273,7 @@ Viết bản làm việc đầy đủ theo các mục dưới đây trước. M�
 
 1. Vấn đề: các cơ hội handover dựa trên đo vô tuyến có thể dẫn đến đánh đổi chất lượng truyền và độ ổn định trong kịch bản UAV đang xét.
 2. Khoảng trống: cần đánh giá hậu quả theo thời gian của việc chấp nhận/từ chối các cơ hội A3, cùng trạng thái RLM và lịch sử HO.
-3. Phương pháp: policy nhị phân theo sự kiện, observation 19 chiều, PPO dùng thời lượng macro-transition.
+3. Phương pháp: policy 11 action theo sự kiện, shortlist topology-aware, observation 109 chiều và PPO dùng thời lượng macro-transition.
 4. Bằng chứng: nêu đúng dataset/split/baseline và hai hoặc ba kết quả định lượng chính sau khi rerun. Nêu cả chi phí rate nếu nó tồn tại.
 5. Kết luận có điều kiện: tác dụng trong setting đã thử và kết quả trên vận tốc chưa thấy; tránh bảo đảm tổng quát.
 
@@ -288,7 +291,7 @@ Keywords gợi ý: Cellular UAV; Handover; Semi-Markov Decision Process; Proxima
 | 4 | Khoảng trống cụ thể và câu hỏi chính | Phân biệt novelty của thiết kế với chỉ thay dataset |
 | 5 | Ba đóng góp, mỗi đóng góp gắn thí nghiệm kiểm chứng | RQ1–RQ3; không dùng “optimal” nếu chỉ có empirical result |
 
-Một câu xương sống có thể phát triển: “We study whether learning to accept or reject completed A3 opportunities can improve the rate–reliability trade-off for cellular UAVs when decision outcomes unfold over unequal physical durations.”
+Một câu xương sống có thể phát triển: “We study whether an A3-triggered policy that jointly decides handover admission and target selection can improve the rate–reliability trade-off for cellular UAVs when outcomes unfold over unequal physical durations.”
 
 Không cần một mục Background dài giải thích từng message Uu/Xn/NG nếu các message đó không được mô phỏng và không tác động riêng lên policy.
 
@@ -306,11 +309,11 @@ Không cần một mục Background dài giải thích từng message Uu/Xn/NG n
 
 **III-A. Decision process:** định nghĩa primitive index `n`, decision index `k`, thời điểm `t_k`, tập mẫu `I_k`, thời lượng `tau_k`. Nêu transition `(o_k, a_k, R_k, tau_k, o_(k+1))`, terminal và phần prefix trước quyết định đầu.
 
-**III-B. Observation and actions:** dùng một bảng 5 nhóm/19 chiều thay cho 5 tiểu mục gần lặp nhau. Giải thích tại sao nhóm đó có thể hữu ích và chỉ định ablation tương ứng. Ghi normalization/window quan trọng. Mô tả chính xác tác dụng kéo dài của STAY, target latching của HO và điều kiện tái xét/hủy của WAIT_50.
+**III-B. Observation and actions:** trình bày block 19 chiều của `C1`, block 10 chiều lặp cho `C2..C10`, quy tắc shortlist và action mask. Giải thích vai trò của topology, normalization/window và tính causal. Mô tả chính xác tác dụng kéo dài của STAY và target latching của `HO_Ci`.
 
 **III-C. Reward and objective:** một phương trình reward với `Delta t`; một phương trình macro utility/objective đã thống nhất. Giải thích đơn vị, event counting, HOF dẫn vào RLF và vì sao không có penalty HOF độc lập. Nêu trọng số là lựa chọn utility cần sensitivity analysis.
 
-**III-D. Duration-aware learning:** trình bày `Gamma_k`, `Lambda_k`, TD residual, GAE và masked bootstrapping. PPO clipped loss chỉ cần công thức chính cùng citation; không trình bày mọi loss chuẩn như một đóng góp mới. Nêu shared encoder 19→64→64, policy head 3 logits và value head 1 scalar.
+**III-D. Duration-aware learning:** trình bày `Gamma_k`, `Lambda_k`, TD residual, GAE, terminal mask và action mask. PPO clipped loss chỉ cần công thức chính cùng citation; không trình bày mọi loss chuẩn như một đóng góp mới. Nêu shared encoder 109→64→64, policy head 11 logits và value head 1 scalar.
 
 **III-E. Training and inference:** phân biệt action sampling khi train với argmax khi test; rollout theo macro-transitions; chọn checkpoint trên validation; suy luận dùng actor. Algorithm khoảng 12–18 dòng, tập trung phần khác biệt về event và duration.
 
@@ -366,7 +369,7 @@ Nếu tác giả dùng kết quả 120/150 để liên tục sửa thiết kế,
 
 ### Hình 1: giao thức và thời điểm ra quyết định
 
-Một timeline thể hiện mẫu radio, A3/TTT, actor, ba nhánh STAY suppression, WAIT_50 rồi tái xét, hoặc HO prep/exec, lần quyết định tiếp theo và `tau_k`. Đánh dấu phần nào truyền dữ liệu, phần nào gián đoạn. Đây là hình quan trọng nhất để người đọc hiểu lý do dùng SMDP.
+Một timeline thể hiện mẫu radio, A3/TTT, actor, hai nhánh STAY suppression hoặc HO prep/exec, lần quyết định tiếp theo và `tau_k`. Đánh dấu phần nào truyền dữ liệu, phần nào gián đoạn. Đây là hình quan trọng nhất để người đọc hiểu lý do dùng SMDP.
 
 ### Hình 2: kết quả bốn metric theo tốc độ
 
@@ -392,7 +395,7 @@ Các metric chính và CI, kèm counts khi đủ chỗ. Luôn phân biệt đi�
 | Background về toàn bộ signalling | Rút thành phần giao thức cần cho bài toán, chuyển sang System Model |
 | Terrestrial vs A2G | Giữ những khác biệt có tác động đến thí nghiệm; bỏ khẳng định tổng quát chưa có nguồn hoặc dữ liệu đối chứng |
 | Geometry/channel nhiều phương trình | Chỉ giữ phần cần tái lập và đã đối chiếu generator; không biến thành phần giới thiệu kiến thức kênh |
-| State 19 chiều trình bày dài | Gom 5 nhóm thành một bảng và giải thích vai trò/ablation |
+| State 109 chiều trình bày dài | Tách block C1 và block candidate lặp, giải thích vai trò/ablation |
 | Reward và PPO | Viết lại reward có đơn vị; làm rõ objective; tập trung vào duration và masking |
 | Training prose và Algorithm 31 dòng | Bỏ lặp, thuật toán chỉ giữ bước đặc thù |
 | Three separate result figures | Chuyển thành bốn panel có RLF time; dùng chỗ còn lại cho ablation |

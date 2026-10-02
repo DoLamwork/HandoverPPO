@@ -126,7 +126,8 @@ Lệnh này chạy cả test của HandoverOptimDRL, test tích hợp và test s
 
 - [Thành phần tạo dữ liệu UAV](data_generator/README.md)
 - [Chi tiết tích hợp vào project chính](docs/uav_data_generator.md)
-- [PPO](docs/ppo.md), [benchmark](docs/benchmark.md), [kiến trúc](docs/architecture.md)
+- [Action đa candidate A3/topology](docs/a3_multicandidate_actions.md),
+  [PPO](docs/ppo.md), [benchmark](docs/benchmark.md), [kiến trúc](docs/architecture.md)
 - [Phạm vi và giả thiết baseline 3GPP](docs/3gpp_baseline_audit.md)
 
 Baseline gồm các quy tắc A3/TTT/RLM/RLF được kiểm tra theo TS 38.331 cùng những giả

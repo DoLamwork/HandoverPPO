@@ -51,7 +51,30 @@ def _no_decision_trace(trace_id: str, num_samples: int = 8) -> RadioTrace:
     return RadioTrace.from_arrays(rsrp, sinr, trace_id=trace_id)
 
 
+def _full_candidate_trace(trace_id: str, num_samples: int = 16) -> RadioTrace:
+    """Return a 21-cell trace for APIs that sample without an action mask."""
+    rsrp = np.full((21, num_samples), -95.0, dtype=np.float64)
+    rsrp[0] = -80.0
+    rsrp[1] = -77.0
+    sinr = np.full((21, num_samples), -5.0, dtype=np.float64)
+    sinr[0] = 10.0
+    return RadioTrace.from_arrays(rsrp, sinr, trace_id=trace_id)
+
+
 class HandoverGymContractTests(unittest.TestCase):
+    def test_checkpoint_objective_schema_mismatch_is_rejected(self) -> None:
+        env = HandoverSMDPEnv(
+            traces=[_decision_trace("schema", target_sinr_db=2.0)]
+        )
+        objective = env.objective_spec
+        objective["candidate_policy"] = "different_order"
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Checkpoint objective schema differs",
+        ):
+            env.validate_checkpoint_objective({"objective": objective})
+
     def test_spaces_reset_and_terminal_step_follow_gymnasium_contract(self) -> None:
         trace = _decision_trace("terminal", num_samples=8)
         env = HandoverSMDPEnv(Config(), traces=[trace])
@@ -59,7 +82,13 @@ class HandoverGymContractTests(unittest.TestCase):
         observation, reset_info = env.reset(seed=7)
 
         self.assertIsInstance(env.action_space, gym.spaces.Discrete)
-        self.assertEqual(env.action_space.n, 3)
+        self.assertEqual(env.action_space.n, 11)
+        self.assertEqual(observation.shape, (109,))
+        self.assertEqual(reset_info["candidate_cells"], [1] + [None] * 9)
+        self.assertEqual(
+            reset_info["action_mask"],
+            [True, True] + [False] * 9,
+        )
         self.assertTrue(env.observation_space.contains(observation))
         self.assertEqual(reset_info["trace_id"], "terminal")
         self.assertEqual(reset_info["uncontrolled_duration_ticks"], 5)
@@ -75,7 +104,8 @@ class HandoverGymContractTests(unittest.TestCase):
             np.zeros(env.observation_space.shape, dtype=np.float32),
         )
         self.assertIsInstance(reward, float)
-        self.assertAlmostEqual(reward, info["reward"]["total"])
+        self.assertAlmostEqual(reward, info["discounted_reward"]["total"])
+        self.assertLessEqual(reward, info["reward"]["total"])
         self.assertTrue(terminated)
         self.assertFalse(truncated)
         self.assertEqual(info["duration_ticks"], 3)
@@ -85,6 +115,35 @@ class HandoverGymContractTests(unittest.TestCase):
         self.assertEqual(info["episode_duration_ticks"], 8)
         self.assertIsNone(info["next_decision"])
         self.assertIn("episode_metrics", info)
+
+    def test_episode_return_applies_discount_between_macro_steps(self) -> None:
+        rsrp = np.vstack(
+            (
+                np.full(16, -80.0),
+                np.array([-77.0] * 8 + [-81.0] + [-77.0] * 7),
+            )
+        )
+        sinr = np.vstack((np.full(16, 10.0), np.full(16, 0.0)))
+        env = HandoverSMDPEnv(
+            Config(),
+            traces=[RadioTrace.from_arrays(rsrp, sinr)],
+            gamma_per_second=0.95,
+        )
+        env.reset()
+
+        _, first_reward, first_terminated, _, first_info = env.step(
+            int(HandoverAction.STAY)
+        )
+        _, second_reward, second_terminated, _, second_info = env.step(
+            int(HandoverAction.STAY)
+        )
+
+        self.assertFalse(first_terminated)
+        self.assertTrue(second_terminated)
+        self.assertAlmostEqual(
+            second_info["episode_return"],
+            first_reward + first_info["discount"] * second_reward,
+        )
 
     def test_reset_seed_reproduces_trace_and_observation(self) -> None:
         traces = [
@@ -190,8 +249,8 @@ class HandoverGymContractTests(unittest.TestCase):
     def test_environment_passes_gymnasium_checker(self) -> None:
         env = HandoverSMDPEnv(
             traces=[
-                _decision_trace("first"),
-                _decision_trace("second", target_sinr_db=4.0),
+                _full_candidate_trace("first"),
+                _full_candidate_trace("second"),
             ]
         )
 

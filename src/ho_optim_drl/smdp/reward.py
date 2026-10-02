@@ -37,6 +37,16 @@ class RewardBreakdown:
             ping_pong=self.ping_pong + other.ping_pong,
         )
 
+    def scaled(self, factor: float) -> "RewardBreakdown":
+        """Return every component multiplied by one finite factor."""
+        if not math.isfinite(factor):
+            raise ValueError("Reward scale factor must be finite.")
+        return RewardBreakdown(
+            rate=self.rate * factor,
+            rlf=self.rlf * factor,
+            ping_pong=self.ping_pong * factor,
+        )
+
 
 @dataclass(frozen=True)
 class HandoverRewardConfig:

@@ -1,0 +1,116 @@
+{
+  "schema_name": "uav_radio_trajectory_dataset_provenance",
+  "schema_version": 1,
+  "status": "Legacy metadata reconstructed from the historical generator and confirmed by the dataset owner.",
+  "dataset": {
+    "id": "UAV_data_100m_grid100m",
+    "raw_directory": "data/UAV_data_100m_grid100m",
+    "processed_directory": "data/uav_100m_grid100m_dev_processed",
+    "trajectory_count": 1060,
+    "csv_file_count_per_variant": 2120,
+    "files_per_trajectory": 2,
+    "samples_per_file": 6000,
+    "sample_interval_ms": 10,
+    "duration_s": 60.0,
+    "uav_altitude_m": 100.0,
+    "trajectory_count_by_speed_kmh": {
+      "30": 420,
+      "50": 255,
+      "70": 180,
+      "90": 145,
+      "120": 30,
+      "150": 30
+    },
+    "seed_rule": "seed = speed_kmh * 1000 + route_id"
+  },
+  "file_contract": {
+    "pairing_key": ["speed_kmh", "route_id"],
+    "raw_patterns": {
+      "rsrp": "ue0_rsrp_{speed_kmh}kmh_{route_id}.csv",
+      "sinr": "ue0_sinr_{speed_kmh}kmh_{route_id}.csv"
+    },
+    "processed_patterns": {
+      "rsrp": "rsrp_{speed_kmh}kmh_{route_id}.csv",
+      "sinr": "sinr_{speed_kmh}kmh_{route_id}.csv"
+    },
+    "raw_columns": "Step,bs0,...,bs20",
+    "processed_columns": "sample,time_ms,bs_0,...,bs_20",
+    "column_mapping_rules": {
+      "Step": "sample",
+      "time_ms": "sample * 10",
+      "bsN": "bs_N"
+    },
+    "rsrp_unit": "dBm",
+    "sinr_unit": "dB"
+  },
+  "coordinate_system": {
+    "type": "local Cartesian simulation coordinates",
+    "unit": "m",
+    "map_center_xy_m": [5000.0, 5000.0],
+    "uav_bounds_m": {
+      "x": [4000.0, 6000.0],
+      "y": [4166.5, 5833.5],
+      "z": 100.0
+    },
+    "bearing_convention": "0 degrees is +x; positive rotation is counter-clockwise toward +y.",
+    "real_world_geolocation": false
+  },
+  "topology": {
+    "physical_site_count": 7,
+    "sector_cell_count": 21,
+    "sectors_per_site": 3,
+    "sector_bearings_deg": [0.0, 120.0, 240.0],
+    "nearest_site_spacing_m": 866.0254037844386,
+    "cell_index_rule": "cell_index = site_id * 3 + sector_id",
+    "raw_column_rule": "bs{cell_index}",
+    "processed_column_rule": "bs_{cell_index}",
+    "sites": [
+      {"site_id": 0, "hex_axial_qrs": [-1, 0, 1], "position_xyz_m": [4250.0, 4566.987298107781, 25.0], "cell_indices": [0, 1, 2]},
+      {"site_id": 1, "hex_axial_qrs": [-1, 1, 0], "position_xyz_m": [4250.0, 5433.012701892219, 25.0], "cell_indices": [3, 4, 5]},
+      {"site_id": 2, "hex_axial_qrs": [0, -1, 1], "position_xyz_m": [5000.0, 4133.974596215561, 25.0], "cell_indices": [6, 7, 8]},
+      {"site_id": 3, "hex_axial_qrs": [0, 0, 0], "position_xyz_m": [5000.0, 5000.0, 25.0], "cell_indices": [9, 10, 11]},
+      {"site_id": 4, "hex_axial_qrs": [0, 1, -1], "position_xyz_m": [5000.0, 5866.025403784439, 25.0], "cell_indices": [12, 13, 14]},
+      {"site_id": 5, "hex_axial_qrs": [1, -1, 0], "position_xyz_m": [5750.0, 4566.987298107781, 25.0], "cell_indices": [15, 16, 17]},
+      {"site_id": 6, "hex_axial_qrs": [1, 0, -1], "position_xyz_m": [5750.0, 5433.012701892219, 25.0], "cell_indices": [18, 19, 20]}
+    ]
+  },
+  "trace_generation_radio": {
+    "provenance": "Reconstructed from the historical source tree used for generation.",
+    "carrier_hz": 4000000000.0,
+    "bandwidth_hz": 20000000.0,
+    "delta_t_ms": 10,
+    "transmit_power_dbm_per_sector": 35.0,
+    "resource_blocks": 51,
+    "subcarriers_per_resource_block": 12,
+    "frequency_reuse": "reuse-1",
+    "antenna": "3GPP-style 3D 8x4 sector array; 10 degree electrical downtilt",
+    "large_scale_model": "correlated LoS/NLoS state, shared per site, 50 m correlation distance",
+    "small_scale_model": "Rician LoS (K=10 dB), Rayleigh NLoS, 1 ms internal substeps"
+  },
+  "runtime_policy": {
+    "auto_loaded_by_training": false,
+    "reason": "This descriptive provenance file is intentionally not named dataset_metadata.json in the processed directory.",
+    "handover_environment": {
+      "carrier_hz": 2100000000.0,
+      "bandwidth_hz": 10000000.0,
+      "delta_t_ms": 10
+    },
+    "warning": "The runtime carrier does not regenerate stored RSRP/SINR. Runtime bandwidth is used for estimated rate and reward; report the historical trace-generation and runtime configurations separately."
+  },
+  "provenance": {
+    "full_metadata_file": "data/UAV_data_100m_grid100m/dataset_metadata.json",
+    "full_metadata_sha256": "df155ae26600bef1867bff6c8a91455429693165db6d5a26cb2313c72787a962",
+    "historical_git_context": "Repository HEAD before generation was a2866d4; the batch script was later and uncommitted during generation.",
+    "topology_confidence": "high; deterministic source reconstruction and dataset-owner confirmation",
+    "radio_configuration_confidence": "high; historical source-tree reconstruction"
+  },
+  "verification": {
+    "checked_on": "2026-09-26",
+    "raw_filename_inventory_sha256": "2f598a4ef2d6ff385c8c66dae2bed2bfe428145626f217bf3d21760ad06b71fd",
+    "processed_filename_inventory_sha256": "d1b64e56f4e9f3736e262f8e93cf439e562a9a7346e23bb3c7a4915bfa77b017",
+    "file_counts_match": true,
+    "all_expected_pairs_present": true,
+    "all_headers_match": true,
+    "unexpected_csv_files": 0
+  }
+}

@@ -9,19 +9,29 @@ from a few milliseconds to the remainder of a trajectory.
 The default actor-critic has:
 
 ```text
-input             19 normalized A3 observation features
-shared encoder    Linear(19, 64) -> Tanh -> Linear(64, 64) -> Tanh
-policy head       3 logits for STAY, HANDOVER, and WAIT_50
+input             109 normalized causal observation features
+shared encoder    Linear(109, 64) -> Tanh -> Linear(64, 64) -> Tanh
+policy head       11 logits for STAY and HO_C1..HO_C10
 value head        1 scalar
 ```
 
 Policy actions are sampled from a categorical distribution during training and
 chosen by maximum probability during deterministic evaluation.
 
-`WAIT_50` defers the current A3 opportunity by exactly 50 ms (five radio ticks)
-and exposes it again only while the same serving-target event remains valid.
-This gives the policy a short, explicit observation window between immediate
-handover and the longer event suppression caused by `STAY`.
+The first 19 inputs keep the original observation for the completed-A3 target
+`C1`. Each of `C2..C10` adds ten causal features: spectral efficiency, rate
+gain over serving, current/mean/min/slope/std of the A3 margin, SINR slope,
+Qin gap, and whether it is the previous cell.
+
+`STAY` rejects the current serving-target A3 opportunity until that event
+leaves the condition or the target changes. `HO_Ci` starts preparation toward
+the cell stored in candidate slot `Ci`. Candidate identities are frozen from
+observation construction until the action is applied.
+
+Unavailable slots are masked in sampling, rollout storage, PPO updates, and
+deterministic evaluation. The policy head starts with exactly zero weights and
+biases, so the initial policy is uniform over valid actions (1/11 each on the
+21-cell dataset) before PPO learns a preference.
 
 ## Duration-aware GAE
 
@@ -167,7 +177,8 @@ partial logs survive an interrupted run.
 
 Every new training run also writes an auditable dataset manifest. It records
 the exact train, validation, and test RSRP/SINR filenames, file sizes, and
-SHA-256 hashes. The manifest hash is embedded in every saved checkpoint.
+SHA-256 hashes. If `dataset_provenance.json` is present, its topology fingerprint
+is pinned as well. The manifest hash is embedded in every saved checkpoint.
 Each `update_complete` record in `training_metrics.jsonl` and each item in the
 report `history` additionally contains:
 

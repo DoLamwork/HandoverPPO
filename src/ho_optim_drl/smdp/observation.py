@@ -358,7 +358,13 @@ class A3ObservationBuilder(ObservationBuilder):
         )
         if not np.all(np.isfinite(observation)):
             raise RuntimeError("Observation contains a non-finite value.")
-        if np.any(observation < self.LOW) or np.any(observation > self.HIGH):
+        # Validate this base block against its own 19-feature bounds.  A
+        # subclass may append features and therefore expose longer LOW/HIGH
+        # arrays through the public ObservationBuilder contract.
+        if (
+            np.any(observation < A3ObservationBuilder.LOW)
+            or np.any(observation > A3ObservationBuilder.HIGH)
+        ):
             raise RuntimeError("Observation violates its declared bounds.")
         return observation
 
