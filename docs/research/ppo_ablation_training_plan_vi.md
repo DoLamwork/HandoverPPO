@@ -1,9 +1,10 @@
 # Kế hoạch kiểm thử các bản PPO tiếp theo
 
 Ngày lập: 02/10/2026.
-Trạng thái: P0 đã triển khai và smoke 2.048 macro-step đã đạt kiểm tra
-mechanics; P1-P5 vẫn là kế hoạch, chưa chạy train dài. Báo cáo triển khai:
-`docs/research/p0_experiment_baseline_report_vi.md`.
+Trạng thái: P0 đã triển khai; P1 đã hoàn thành code, audit train-only và smoke
+E01-E03 nhưng chưa chạy screening 100k. P2-P5 vẫn là kế hoạch. Báo cáo:
+`docs/research/p0_experiment_baseline_report_vi.md` và
+`docs/research/p1_candidate_ablation_report_vi.md`.
 Tài liệu thiết kế: docs/research/ppo_qos_observation_reward_design_vi.md.
 
 ## 1. Mục tiêu và nguyên tắc so sánh
@@ -105,6 +106,13 @@ Chạy smoke 2.048 macro-step để xác nhận mechanics; F0/F1 matched 100k se
 Đầu ra P0: baseline config tái lập, smoke report, logger, F1 và checkpoint contract hoạt động. Chưa chạy train dài nếu mechanics chưa đạt.
 
 ## 4. P1 — chọn số lượng và cách tạo candidate
+
+Trạng thái triển khai ngày 02/10/2026: selector ranked_v1, K=3/5/10, audit
+counterfactual và checkpoint/benchmark schema động đã hoạt động. Audit 80 route
+train, 589 state cho coverage K=3 bằng 100% trên 38-39 positive state so với C1
+và 30-34 positive state so với best(STAY,C1). Đây mới là bằng chứng shortlist;
+E00-E03 100k vẫn phải chạy trước khi khóa K*. Xem báo cáo P1 để biết caveat và
+lệnh chạy.
 
 ### 4.1. Audit offline trước
 

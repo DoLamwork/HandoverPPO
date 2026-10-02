@@ -162,7 +162,13 @@ def main(root_path: str, args: Namespace) -> int:
     agent, checkpoint_extra = SMDPPPO.from_checkpoint(
         checkpoint_path,
         device=args.device,
-        action_size=len(HandoverAction),
+    )
+    objective = checkpoint_extra.get("objective", {})
+    candidate_count = int(
+        objective.get("candidate_count", agent.model.action_size - 1)
+    )
+    candidate_order = str(
+        objective.get("candidate_order_key", "legacy")
     )
     protocol_config = load_protocol_config(data_dir, checkpoint_extra)
     if args.split_seed is None:
@@ -222,6 +228,8 @@ def main(root_path: str, args: Namespace) -> int:
             data_dir=data_dir,
             trace_pairs=selected_pairs,
             gamma_per_second=agent.config.gamma_per_second,
+            candidate_count=candidate_count,
+            candidate_order=candidate_order,
         )
         env.validate_checkpoint_objective(checkpoint_extra)
         all_rows.extend(

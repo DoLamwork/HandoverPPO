@@ -54,6 +54,8 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
         observation_config: A3ObservationConfig | None = None,
         reward_config: HandoverRewardConfig | None = None,
         gamma_per_second: float = 0.99,
+        candidate_count: int = 10,
+        candidate_order: str = "legacy",
     ) -> None:
         super().__init__()
         if protocol_config is None and data_dir is not None:
@@ -76,6 +78,8 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
             self.config,
             observation_config,
             topology=topology,
+            candidate_count=candidate_count,
+            candidate_order=candidate_order,
         )
         reward_model = HandoverRewardModel(self.config, reward_config)
         self.transition_builder = MacroTransitionBuilder(
@@ -85,7 +89,7 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
             gamma_per_second=gamma_per_second,
         )
 
-        self.action_space = spaces.Discrete(len(HandoverAction))
+        self.action_space = spaces.Discrete(candidate_count + 1)
         self.observation_space = spaces.Box(
             low=observation_builder.low,
             high=observation_builder.high,
@@ -123,12 +127,29 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
         """Return checkpoint/report metadata that fixes action semantics."""
         builder = self.transition_builder.observation_builder
         return {
-            "version": "a3_topology109_v1",
+            "version": (
+                "a3_topology109_v1"
+                if builder.candidate_count == 10
+                and builder.candidate_order == "legacy"
+                else (
+                    f"a3_topology_k{builder.candidate_count}_"
+                    f"{builder.candidate_order}_v1"
+                )
+            ),
             "trigger": "completed_a3_ttt",
             "candidate_policy": builder.CANDIDATE_POLICY,
+            "candidate_order": builder.candidate_order_spec,
+            "candidate_order_key": builder.candidate_order,
+            "candidate_count": builder.candidate_count,
+            "full_candidate_pool_size": builder.MAX_CANDIDATES,
             "observation_size": builder.size,
             "observation_features": list(builder.feature_names),
-            "action_names": [action.name for action in HandoverAction],
+            "action_names": [
+                action.name
+                for action in list(HandoverAction)[
+                    : builder.candidate_count + 1
+                ]
+            ],
             "reward": "legacy_handover_reward_v1",
             "discount_mode": "intra_macro_time_consistent_v1",
         }
@@ -149,11 +170,18 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
             "observation_features",
             "action_names",
         )
+        optional_fields = ("candidate_order", "candidate_count")
         mismatches = [
             field_name
             for field_name in fields
             if saved.get(field_name) != current.get(field_name)
         ]
+        mismatches.extend(
+            field_name
+            for field_name in optional_fields
+            if field_name in saved
+            and saved.get(field_name) != current.get(field_name)
+        )
         if mismatches:
             raise ValueError(
                 "Checkpoint objective schema differs from environment in: "

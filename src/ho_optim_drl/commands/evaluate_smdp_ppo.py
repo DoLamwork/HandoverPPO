@@ -10,7 +10,6 @@ import os
 from ho_optim_drl import HandoverSMDPEnv
 from ho_optim_drl.agents.ppo import SMDPPPO
 from ho_optim_drl.data.project import checkpoint_pairs, load_protocol_config
-from ho_optim_drl.smdp import HandoverAction
 
 
 def main(root_path: str, args: Namespace) -> int:
@@ -23,7 +22,13 @@ def main(root_path: str, args: Namespace) -> int:
     agent, checkpoint_extra = SMDPPPO.from_checkpoint(
         checkpoint_path,
         device=args.device,
-        action_size=len(HandoverAction),
+    )
+    objective = checkpoint_extra.get("objective", {})
+    candidate_count = int(
+        objective.get("candidate_count", agent.model.action_size - 1)
+    )
+    candidate_order = str(
+        objective.get("candidate_order_key", "legacy")
     )
     selected_pairs = checkpoint_pairs(
         data_dir, checkpoint_path, checkpoint_extra, split=args.split,
@@ -35,6 +40,8 @@ def main(root_path: str, args: Namespace) -> int:
         data_dir=data_dir,
         trace_pairs=selected_pairs,
         gamma_per_second=agent.config.gamma_per_second,
+        candidate_count=candidate_count,
+        candidate_order=candidate_order,
     )
     env.validate_checkpoint_objective(checkpoint_extra)
     metrics = agent.evaluate(env)

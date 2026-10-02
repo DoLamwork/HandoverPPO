@@ -75,6 +75,25 @@ class HandoverGymContractTests(unittest.TestCase):
         ):
             env.validate_checkpoint_objective({"objective": objective})
 
+    def test_candidate_count_controls_action_and_observation_spaces(self) -> None:
+        env = HandoverSMDPEnv(
+            traces=[_full_candidate_trace("k3")],
+            candidate_count=3,
+            candidate_order="ranked_v1",
+        )
+
+        observation, info = env.reset()
+
+        self.assertEqual(observation.shape, (39,))
+        self.assertEqual(env.action_space.n, 4)
+        self.assertEqual(len(info["candidate_cells"]), 3)
+        self.assertEqual(len(info["action_mask"]), 4)
+        self.assertEqual(env.objective_spec["candidate_count"], 3)
+        self.assertEqual(
+            env.objective_spec["candidate_order_key"],
+            "ranked_v1",
+        )
+
     def test_spaces_reset_and_terminal_step_follow_gymnasium_contract(self) -> None:
         trace = _decision_trace("terminal", num_samples=8)
         env = HandoverSMDPEnv(Config(), traces=[trace])

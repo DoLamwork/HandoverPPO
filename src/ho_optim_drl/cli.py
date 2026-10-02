@@ -41,6 +41,31 @@ def run(argv=None) -> int:
         help="Optional speed(s) in km/h to validate; defaults to every discovered speed.",
     )
     validate_parser.add_argument("--output-dir", default="results/3gpp/uav_generated")
+    audit_parser = subparsers.add_parser(
+        "audit_candidates",
+        help="Run the P1 train-only counterfactual candidate audit.",
+    )
+    audit_parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    audit_parser.add_argument("--speeds", type=int, nargs="+", default=None)
+    audit_parser.add_argument("--train-fraction", type=float, default=0.70)
+    audit_parser.add_argument("--validation-fraction", type=float, default=0.15)
+    audit_parser.add_argument("--test-fraction", type=float, default=0.15)
+    audit_parser.add_argument("--split-seed", type=int, default=17)
+    audit_parser.add_argument("--sample-seed", type=int, default=17)
+    audit_parser.add_argument("--routes-per-speed", type=int, default=20)
+    audit_parser.add_argument("--max-decisions-per-route", type=int, default=4)
+    audit_parser.add_argument("--decision-stride", type=int, default=10)
+    audit_parser.add_argument(
+        "--horizons", type=float, nargs="+", default=[0.5, 1.0, 2.0]
+    )
+    audit_parser.add_argument(
+        "--checkpoint",
+        default=None,
+        help="Optional existing PPO checkpoint used as a second state source.",
+    )
+    audit_parser.add_argument(
+        "--output-dir", default="results/audit/p1_candidates_s17"
+    )
     train_parser = subparsers.add_parser(
         "train_ppo",
         help="Train duration-aware PPO on the SMDP environment.",
@@ -79,6 +104,22 @@ def run(argv=None) -> int:
         help="Fraction of trajectories per speed reserved for final testing.",
     )
     train_parser.add_argument("--total-macro-steps", type=int, default=100_000)
+    train_parser.add_argument(
+        "--candidate-count",
+        type=int,
+        choices=(3, 5, 10),
+        default=10,
+        help="Number K of frozen handover candidates exposed to PPO.",
+    )
+    train_parser.add_argument(
+        "--candidate-order",
+        choices=("legacy", "ranked_v1"),
+        default="legacy",
+        help=(
+            "legacy keeps the topology pool order; ranked_v1 promotes the "
+            "best-current and causal +90 ms projected alternatives."
+        ),
+    )
     train_parser.add_argument("--rollout-steps", type=int, default=1024)
     train_parser.add_argument("--batch-size", type=int, default=128)
     train_parser.add_argument("--update-epochs", type=int, default=4)
@@ -258,6 +299,10 @@ def run(argv=None) -> int:
         from ho_optim_drl.commands import validate_3gpp
 
         return validate_3gpp.main(root_path, args)
+    if args.command == "audit_candidates":
+        from ho_optim_drl.commands import audit_candidates
+
+        return audit_candidates.main(root_path, args)
     if args.command == "train_ppo":
         from ho_optim_drl.commands import train_smdp_ppo
 

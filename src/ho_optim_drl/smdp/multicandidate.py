@@ -1,4 +1,4 @@
-"""Topology-aware ten-candidate extension of the original A3 observation."""
+"""Topology-aware configurable candidate extension of the A3 observation."""
 
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ from .observation import A3ObservationBuilder, A3ObservationConfig
 
 
 _MAX_CANDIDATES = 10
+_SUPPORTED_CANDIDATE_COUNTS = (3, 5, 10)
+_SUPPORTED_CANDIDATE_ORDERS = ("legacy", "ranked_v1")
 _ADDITIONAL_FEATURES = (
     "spectral_efficiency",
     "delta_spectral_efficiency",
@@ -37,12 +39,14 @@ class _AllCellRecord:
 
 
 class TopologyCandidateObservationBuilder(A3ObservationBuilder):
-    """Keep the original C1 features and append causal C2--C10 blocks.
+    """Keep the original C1 features and append causal candidate blocks.
 
-    Candidate ordering is deterministic: the A3 target, other sectors at the
+    The legacy pool is deterministic: the A3 target, other sectors at the
     serving site, all sectors from the two strongest first-ring sites, then the
-    strongest remaining measured cells. Candidate identities are frozen from
-    observation construction until the action is applied.
+    strongest remaining measured cells. ``ranked_v1`` keeps the exact same
+    ten-cell pool but places the best-current-SINR alternative second and a
+    distinct best projected-SINR (+90 ms, causal linear trend) alternative
+    third. K=3 and K=5 are prefixes of that frozen ten-cell list.
     """
 
     MAX_CANDIDATES = _MAX_CANDIDATES
@@ -64,6 +68,7 @@ class TopologyCandidateObservationBuilder(A3ObservationBuilder):
     ).astype(np.float32)
     HIGH = np.ones(len(FEATURE_NAMES), dtype=np.float32)
     CANDIDATE_POLICY = "a3_same_site_two_neighbor_sites_fill_rsrp_v1"
+    CANDIDATE_ORDERS = _SUPPORTED_CANDIDATE_ORDERS
 
     def __init__(
         self,
@@ -71,14 +76,49 @@ class TopologyCandidateObservationBuilder(A3ObservationBuilder):
         observation_config: A3ObservationConfig | None = None,
         *,
         topology: CellTopology | None = None,
+        candidate_count: int = _MAX_CANDIDATES,
+        candidate_order: str = "legacy",
     ) -> None:
         super().__init__(protocol_config, observation_config)
+        if candidate_count not in _SUPPORTED_CANDIDATE_COUNTS:
+            raise ValueError(
+                "candidate_count must be one of "
+                f"{_SUPPORTED_CANDIDATE_COUNTS}."
+            )
+        if candidate_order not in _SUPPORTED_CANDIDATE_ORDERS:
+            raise ValueError(
+                "candidate_order must be one of "
+                f"{_SUPPORTED_CANDIDATE_ORDERS}."
+            )
         self.topology = topology
+        self.candidate_count = int(candidate_count)
+        self.candidate_order = candidate_order
+        self._feature_names = A3ObservationBuilder.FEATURE_NAMES + tuple(
+            f"c{slot}_{feature}"
+            for slot in range(2, self.candidate_count + 1)
+            for feature in self.ADDITIONAL_FEATURES
+        )
+        self._low = np.concatenate(
+            (
+                A3ObservationBuilder.LOW,
+                np.tile(
+                    self._ADDITIONAL_LOW,
+                    self.candidate_count - 1,
+                ),
+            )
+        ).astype(np.float32)
+        self._high = np.ones(len(self._feature_names), dtype=np.float32)
         self._all_cell_history: deque[_AllCellRecord] = deque(
             maxlen=self.config.history_window_ticks
         )
-        self.candidate_cells: tuple[int | None, ...] = (
+        self.candidate_pool_cells: tuple[int | None, ...] = (
             (None,) * self.MAX_CANDIDATES
+        )
+        self.legacy_candidate_pool_cells: tuple[int | None, ...] = (
+            (None,) * self.MAX_CANDIDATES
+        )
+        self.candidate_cells: tuple[int | None, ...] = (
+            (None,) * self.candidate_count
         )
         self._candidate_tic: int | None = None
         self._cached_observation: np.ndarray | None = None
@@ -86,9 +126,33 @@ class TopologyCandidateObservationBuilder(A3ObservationBuilder):
     def reset(self) -> None:
         super().reset()
         self._all_cell_history.clear()
-        self.candidate_cells = (None,) * self.MAX_CANDIDATES
+        self.candidate_pool_cells = (None,) * self.MAX_CANDIDATES
+        self.legacy_candidate_pool_cells = (None,) * self.MAX_CANDIDATES
+        self.candidate_cells = (None,) * self.candidate_count
         self._candidate_tic = None
         self._cached_observation = None
+
+    @property
+    def size(self) -> int:
+        return len(self._feature_names)
+
+    @property
+    def feature_names(self) -> tuple[str, ...]:
+        return self._feature_names
+
+    @property
+    def low(self) -> np.ndarray:
+        return self._low.copy()
+
+    @property
+    def high(self) -> np.ndarray:
+        return self._high.copy()
+
+    @property
+    def candidate_order_spec(self) -> str:
+        if self.candidate_order == "legacy":
+            return "legacy_topology_pool_order_v1"
+        return "c1_current_sinr_projected_sinr_90ms_then_legacy_v1"
 
     def observe(self, tick: TickResult) -> None:
         super().observe(tick)
@@ -122,7 +186,15 @@ class TopologyCandidateObservationBuilder(A3ObservationBuilder):
                 f"Topology declares {topology.num_cells} cells but trace has "
                 f"{num_cells}."
             )
-        self.candidate_cells = self._select_candidates(snapshot, topology)
+        legacy_pool = self._select_candidate_pool(snapshot, topology)
+        self.legacy_candidate_pool_cells = legacy_pool
+        self.candidate_pool_cells = self._order_candidate_pool(
+            snapshot,
+            legacy_pool,
+        )
+        self.candidate_cells = self.candidate_pool_cells[
+            : self.candidate_count
+        ]
 
         event_history = [
             record
@@ -143,14 +215,14 @@ class TopologyCandidateObservationBuilder(A3ObservationBuilder):
                 )
             )
         observation = np.asarray(values, dtype=np.float32)
-        if observation.shape != (len(self.FEATURE_NAMES),):
+        if observation.shape != (self.size,):
             raise RuntimeError(
-                f"Expected {len(self.FEATURE_NAMES)} features, got "
+                f"Expected {self.size} features, got "
                 f"{observation.shape}."
             )
         if not np.all(np.isfinite(observation)):
             raise RuntimeError("Candidate observation contains a non-finite value.")
-        observation = np.clip(observation, self.LOW, self.HIGH)
+        observation = np.clip(observation, self._low, self._high)
         self._candidate_tic = snapshot.tic
         self._cached_observation = observation.copy()
         return observation
@@ -162,7 +234,7 @@ class TopologyCandidateObservationBuilder(A3ObservationBuilder):
             dtype=np.bool_,
         )
 
-    def _select_candidates(
+    def _select_candidate_pool(
         self,
         snapshot: ProtocolSnapshot,
         topology: CellTopology,
@@ -217,6 +289,72 @@ class TopologyCandidateObservationBuilder(A3ObservationBuilder):
         padded: list[int | None] = chosen[: self.MAX_CANDIDATES]
         padded.extend([None] * (self.MAX_CANDIDATES - len(padded)))
         return tuple(padded)
+
+    def _order_candidate_pool(
+        self,
+        snapshot: ProtocolSnapshot,
+        legacy_pool: tuple[int | None, ...],
+    ) -> tuple[int | None, ...]:
+        if self.candidate_order == "legacy":
+            return legacy_pool
+        if not legacy_pool or legacy_pool[0] is None:
+            raise RuntimeError("The candidate pool has no A3 target.")
+
+        c1 = int(legacy_pool[0])
+        alternatives = [
+            int(cell) for cell in legacy_pool[1:] if cell is not None
+        ]
+        current_rank = sorted(
+            alternatives,
+            key=lambda cell: (
+                -float(snapshot.sinr_rate_db[cell]),
+                cell,
+            ),
+        )
+        projected_rank = sorted(
+            alternatives,
+            key=lambda cell: (
+                -self._projected_sinr_db(cell, horizon_seconds=0.09),
+                cell,
+            ),
+        )
+        ordered: list[int] = [c1]
+        if current_rank:
+            ordered.append(current_rank[0])
+        projected_alternative = next(
+            (cell for cell in projected_rank if cell not in ordered),
+            None,
+        )
+        if projected_alternative is not None:
+            ordered.append(projected_alternative)
+        ordered.extend(
+            int(cell)
+            for cell in legacy_pool[1:]
+            if cell is not None and int(cell) not in ordered
+        )
+        padded: list[int | None] = ordered[: self.MAX_CANDIDATES]
+        padded.extend([None] * (self.MAX_CANDIDATES - len(padded)))
+        return tuple(padded)
+
+    def _projected_sinr_db(
+        self,
+        cell: int,
+        *,
+        horizon_seconds: float,
+    ) -> float:
+        records = list(self._all_cell_history)[
+            -self.config.trend_window_ticks :
+        ]
+        current = float(records[-1].sinr_rate_db[cell])
+        if len(records) < 2:
+            return current
+        tics = np.asarray([record.tic for record in records], dtype=np.float64)
+        values = np.asarray(
+            [record.sinr_rate_db[cell] for record in records],
+            dtype=np.float64,
+        )
+        slope = self._slope_db_per_s(tics, values)
+        return current + slope * horizon_seconds
 
     def _candidate_features(
         self,

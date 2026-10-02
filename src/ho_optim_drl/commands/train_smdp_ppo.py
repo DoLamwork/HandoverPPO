@@ -282,6 +282,8 @@ def build_3gpp_validation_reference(
     trace_pairs: tuple[TracePair, ...],
     *,
     gamma_per_second: float,
+    candidate_count: int = 10,
+    candidate_order: str = "legacy",
 ) -> dict[str, Any]:
     """Evaluate Always-HO once as the QoS reference for checkpoint selection."""
     descriptors = [
@@ -297,6 +299,8 @@ def build_3gpp_validation_reference(
         data_dir=data_dir,
         trace_pairs=trace_pairs,
         gamma_per_second=gamma_per_second,
+        candidate_count=candidate_count,
+        candidate_order=candidate_order,
     )
     rows = benchmark_policy(
         reference_env,
@@ -388,12 +392,18 @@ def write_experiment_config(
         "parent_id": args.parent_id,
         "changed_factor": args.changed_factor,
         "candidate": {
-            "K": len(HandoverAction) - 1,
+            "K": builder.candidate_count,
             "candidate_pool": builder.CANDIDATE_POLICY,
-            "candidate_order": builder.CANDIDATE_POLICY,
+            "candidate_order": builder.candidate_order_spec,
+            "candidate_order_key": builder.candidate_order,
             "mask_mode": "structural_slot_availability_only",
         },
-        "action_schema": [action.name for action in HandoverAction],
+        "action_schema": [
+            action.name
+            for action in list(HandoverAction)[
+                : builder.candidate_count + 1
+            ]
+        ],
         "observation_schema": {
             "name": train_env.objective_spec["version"],
             "size": int(builder.size),
@@ -642,12 +652,16 @@ def main(root_path: str, args: Namespace) -> int:
         data_dir=data_dir,
         trace_pairs=splits.train,
         gamma_per_second=ppo_config.gamma_per_second,
+        candidate_count=args.candidate_count,
+        candidate_order=args.candidate_order,
     )
     validation_env = HandoverSMDPEnv(
         protocol_config,
         data_dir=data_dir,
         trace_pairs=splits.validation,
         gamma_per_second=ppo_config.gamma_per_second,
+        candidate_count=args.candidate_count,
+        candidate_order=args.candidate_order,
     )
     agent = SMDPPPO(
         train_env.observation_space.shape[0],
@@ -687,6 +701,8 @@ def main(root_path: str, args: Namespace) -> int:
         data_dir,
         splits.validation,
         gamma_per_second=ppo_config.gamma_per_second,
+        candidate_count=args.candidate_count,
+        candidate_order=args.candidate_order,
     )
     validation_reference_path = os.path.join(
         output_dir,
@@ -848,6 +864,8 @@ def main(root_path: str, args: Namespace) -> int:
             data_dir=data_dir,
             trace_pairs=splits.test,
             gamma_per_second=ppo_config.gamma_per_second,
+            candidate_count=args.candidate_count,
+            candidate_order=args.candidate_order,
         )
         print("Running held-out test evaluation...", flush=True)
         test_metrics = selected_agent.evaluate(test_env)
