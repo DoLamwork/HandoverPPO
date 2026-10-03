@@ -20,10 +20,15 @@ class RadioTrace:
     sinr_rlm_db: np.ndarray
     delta_t_ms: int
     trace_id: str | None = None
+    speed_kmh: float | None = None
 
     def __post_init__(self) -> None:
         if self.delta_t_ms <= 0:
             raise ValueError("delta_t_ms must be positive.")
+        if self.speed_kmh is not None and (
+            not np.isfinite(self.speed_kmh) or self.speed_kmh < 0
+        ):
+            raise ValueError("speed_kmh must be finite and non-negative.")
 
         arrays = {}
         for name in ("rsrp_a3_db", "sinr_rate_db", "sinr_rlm_db"):
@@ -68,6 +73,7 @@ class RadioTrace:
         sinr_rlm_db: np.ndarray | None = None,
         delta_t_ms: int = 10,
         trace_id: str | None = None,
+        speed_kmh: float | None = None,
     ) -> "RadioTrace":
         """Construct a trace; by default RLM uses the raw rate SINR stream."""
         if sinr_rlm_db is None:
@@ -78,4 +84,5 @@ class RadioTrace:
             sinr_rlm_db=sinr_rlm_db,
             delta_t_ms=delta_t_ms,
             trace_id=trace_id,
+            speed_kmh=speed_kmh,
         )

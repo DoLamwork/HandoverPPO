@@ -1,12 +1,12 @@
 # Kế hoạch kiểm thử các bản PPO tiếp theo
 
 Ngày lập: 02/10/2026.
-Trạng thái: P0 đã triển khai; P1 đã hoàn thành code, audit train-only và
-screening E00-E03 ở 100k seed17. K*=3 được khóa làm nền gọn cho P2, nhưng P1
-không tạo cải thiện vận hành: checkpoint feasible của E00/E02/E03 đều collapse
-về 100% HO_C1 và tái tạo đúng 3GPP. P2-P5 vẫn là kế hoạch. Báo cáo:
+Trạng thái: P0 và P1 đã hoàn tất. P2 đã hoàn thành code E04-E06, audit
+observation train/validation và smoke một PPO update; screening 100k chưa chạy.
+K*=3/ranked_v1 được khóa làm nền P2. P3-P5 vẫn là kế hoạch. Báo cáo:
 `docs/research/p0_experiment_baseline_report_vi.md` và
-`docs/research/p1_candidate_ablation_report_vi.md`.
+`docs/research/p1_candidate_ablation_report_vi.md` và
+`docs/research/p2_observation_ablation_report_vi.md`.
 Tài liệu thiết kế: docs/research/ppo_qos_observation_reward_design_vi.md.
 
 ## 1. Mục tiêu và nguyên tắc so sánh
@@ -159,6 +159,13 @@ Chọn K* dựa validation QoS, reliability, convergence, coverage và chi phí;
 ## 5. P2 — observation, reward vẫn legacy
 
 Khóa K*, ranked selector và structural mask từ P1. Train mới từ đầu mỗi arm; không tiếp tục weights của parent.
+
+Trạng thái triển khai 03/10/2026: bốn schema observation đã được nối xuyên suốt
+train/checkpoint/evaluate/benchmark. E04/E05 giữ 39 chiều; E06 có 62 chiều với
+K=3. Reward vẫn `legacy_handover_reward_v1`. Audit 80 route train và 80 route
+validation, mỗi tập 320 decision, đo predictor +90 ms MAE lần lượt 4,124 và
+4,114 dB. Đây là feature causal nhưng nhiễu, không phải future oracle. Ba smoke
+128 macro-step đã pass; chưa dùng kết quả smoke để promote arm.
 
 | ID | Parent | Chỉ thay đổi |
 |---|---|---|
@@ -356,7 +363,8 @@ Run lịch sử 300k mất 12.570,9 giây ~3,49 giờ, gồm validation. Suy tuy
 3. ~~Train E00, E01, E02, E03 ở 100k seed17.~~ Hoàn tất 03/10/2026.
 4. ~~Chốt K* trên validation/coverage.~~ K*=3 làm nền P2; chưa phải kết luận
    hiệu năng cuối.
-5. Train E04-E06 với K=3/ranked_v1, giữ reward cũ.
+5. Triển khai/audit/smoke E04-E06: hoàn tất. Tiếp theo train screening 100k
+   E04→E05→E06 với K=3/ranked_v1 và reward cũ.
 6. Train E07-E10, giữ K*/observation/mạng.
 7. Bổ sung E11 để hoàn thành interaction 2x2.
 8. Xác nhận tối đa ba cấu hình với ba seed/300k.

@@ -17,6 +17,7 @@ from ho_optim_drl.protocol.types import (
 
 if TYPE_CHECKING:
     from ho_optim_drl.config import Config
+    from ho_optim_drl.data import RadioTrace
 
 
 class ObservationBuilder(ABC):
@@ -25,6 +26,10 @@ class ObservationBuilder(ABC):
     @abstractmethod
     def reset(self) -> None:
         """Clear rolling histories at the beginning of an episode."""
+
+    def start_episode(self, trace: "RadioTrace") -> None:
+        """Receive immutable episode metadata before the first tick."""
+        del trace
 
     @abstractmethod
     def observe(self, tick: TickResult) -> None:
@@ -61,6 +66,8 @@ class A3ObservationConfig:
 
     trend_window_ticks: int = 10
     history_window_ticks: int = 1024
+    short_window_ticks: int = 10
+    long_window_ticks: int = 50
     margin_clip_db: float = 10.0
     margin_std_clip_db: float = 5.0
     slope_clip_db_per_s: float = 100.0
@@ -68,11 +75,17 @@ class A3ObservationConfig:
     residence_time_clip_s: float = 5.0
     time_since_ho_clip_s: float = 5.0
     recent_ho_count_clip: int = 5
+    spectral_efficiency_scale: float = 4.0
+    speed_scale_kmh: float = 90.0
+    projection_horizon_seconds: float = 0.09
+    projection_uncertainty_kappa: float = 1.0
 
     def validate(self) -> None:
         numeric_positive = {
             "trend_window_ticks": self.trend_window_ticks,
             "history_window_ticks": self.history_window_ticks,
+            "short_window_ticks": self.short_window_ticks,
+            "long_window_ticks": self.long_window_ticks,
             "margin_clip_db": self.margin_clip_db,
             "margin_std_clip_db": self.margin_std_clip_db,
             "slope_clip_db_per_s": self.slope_clip_db_per_s,
@@ -80,6 +93,10 @@ class A3ObservationConfig:
             "residence_time_clip_s": self.residence_time_clip_s,
             "time_since_ho_clip_s": self.time_since_ho_clip_s,
             "recent_ho_count_clip": self.recent_ho_count_clip,
+            "spectral_efficiency_scale": self.spectral_efficiency_scale,
+            "speed_scale_kmh": self.speed_scale_kmh,
+            "projection_horizon_seconds": self.projection_horizon_seconds,
+            "projection_uncertainty_kappa": self.projection_uncertainty_kappa,
         }
         for name, value in numeric_positive.items():
             if value <= 0:
@@ -87,6 +104,14 @@ class A3ObservationConfig:
         if self.history_window_ticks < self.trend_window_ticks:
             raise ValueError(
                 "history_window_ticks must be at least trend_window_ticks."
+            )
+        if self.long_window_ticks < self.short_window_ticks:
+            raise ValueError(
+                "long_window_ticks must be at least short_window_ticks."
+            )
+        if self.history_window_ticks < self.long_window_ticks + 1:
+            raise ValueError(
+                "history_window_ticks must cover the inclusive long window."
             )
 
 
@@ -378,7 +403,7 @@ class A3ObservationBuilder(ObservationBuilder):
             )
         return {
             name: float(value)
-            for name, value in zip(self.FEATURE_NAMES, observation)
+            for name, value in zip(self.feature_names, observation)
         }
 
     def _normalized_spectral_efficiency(self, sinr_db: float) -> float:
@@ -394,7 +419,10 @@ class A3ObservationBuilder(ObservationBuilder):
 
     @staticmethod
     def _spectral_efficiency(sinr_db: float) -> float:
-        return float(np.log2(1 + 10 ** (sinr_db / 10)))
+        # logaddexp avoids overflow now that E05/E06 deliberately preserve
+        # SINR values above the legacy +10 dB observation clip.
+        sinr_log = float(sinr_db) * np.log(10.0) / 10.0
+        return float(np.logaddexp(0.0, sinr_log) / np.log(2.0))
 
     @staticmethod
     def _signed_normalize(value: float, clip: float) -> float:
@@ -403,6 +431,17 @@ class A3ObservationBuilder(ObservationBuilder):
     @staticmethod
     def _unsigned_normalize(value: float, clip: float) -> float:
         return float(np.clip(value / clip, 0.0, 1.0))
+
+    @staticmethod
+    def _signed_saturating(value: float, scale: float) -> float:
+        """Map finite signed values monotonically into (-1, 1)."""
+        return float(value / (scale + abs(value)))
+
+    @staticmethod
+    def _unsigned_saturating(value: float, scale: float) -> float:
+        """Map finite non-negative values monotonically into [0, 1)."""
+        value = max(0.0, float(value))
+        return float(value / (scale + value))
 
     def _slope_db_per_s(
         self, tics: np.ndarray, values: np.ndarray

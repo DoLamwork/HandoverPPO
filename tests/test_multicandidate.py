@@ -45,7 +45,33 @@ def _twenty_one_cell_trace() -> RadioTrace:
     sinr[0] = 10.0
     sinr[6] = 5.0
     sinr[9] = 4.0
-    return RadioTrace.from_arrays(rsrp, sinr, trace_id="topology21")
+    return RadioTrace.from_arrays(
+        rsrp, sinr, trace_id="topology21", speed_kmh=30.0
+    )
+
+
+def _delayed_a3_trace() -> RadioTrace:
+    num_samples = 80
+    rsrp = np.full((21, num_samples), -110.0, dtype=np.float64)
+    rsrp[0] = -80.0
+    rsrp[6, :60] = -90.0
+    rsrp[6, 60:] = -77.0
+    rsrp[9] = -84.0
+    rsrp[4] = -86.0
+
+    sinr = np.full((21, num_samples), -8.0, dtype=np.float64)
+    sinr[0] = 12.0
+    sinr[6, :54] = 0.0
+    sinr[6, 54:] = np.linspace(0.0, 40.0, num_samples - 54)
+    sinr[9] = 5.0
+    sinr[4, :55] = -5.0
+    sinr[4, 55:] = np.linspace(-5.0, 8.0, num_samples - 55)
+    return RadioTrace.from_arrays(
+        rsrp,
+        sinr,
+        trace_id="delayed_a3",
+        speed_kmh=30.0,
+    )
 
 
 class TopologyCandidateTests(unittest.TestCase):
@@ -74,6 +100,7 @@ class TopologyCandidateTests(unittest.TestCase):
         *,
         candidate_count: int,
         candidate_order: str,
+        observation_schema: str = "legacy_v1",
         trace: RadioTrace | None = None,
     ) -> tuple[MacroTransitionBuilder, np.ndarray]:
         config = Config()
@@ -82,6 +109,7 @@ class TopologyCandidateTests(unittest.TestCase):
             topology=self.topology,
             candidate_count=candidate_count,
             candidate_order=candidate_order,
+            observation_schema=observation_schema,
         )
         runner = MacroTransitionBuilder(
             HandoverEngine(config),
@@ -248,6 +276,151 @@ class TopologyCandidateTests(unittest.TestCase):
                 Config(),
                 topology=self.topology,
                 candidate_order="future_oracle",
+            )
+        with self.assertRaises(ValueError):
+            TopologyCandidateObservationBuilder(
+                Config(),
+                topology=self.topology,
+                observation_schema="future_oracle",
+            )
+
+    def test_e04_uses_cell_id_history_before_a3_without_changing_size(self) -> None:
+        trace = _delayed_a3_trace()
+        legacy_runner, legacy_observation = self._configured_runner(
+            candidate_count=3,
+            candidate_order="ranked_v1",
+            observation_schema="legacy_v1",
+            trace=trace,
+        )
+        rolling_runner, rolling_observation = self._configured_runner(
+            candidate_count=3,
+            candidate_order="ranked_v1",
+            observation_schema="rolling_v1",
+            trace=trace,
+        )
+        legacy = legacy_runner.observation_builder.as_dict(legacy_observation)
+        rolling = rolling_runner.observation_builder.as_dict(
+            rolling_observation
+        )
+
+        self.assertEqual(legacy_observation.shape, (39,))
+        self.assertEqual(rolling_observation.shape, (39,))
+        self.assertLess(
+            rolling["a3_margin_mean"], legacy["a3_margin_mean"]
+        )
+        self.assertEqual(
+            rolling_runner.observation_builder.candidate_cells,
+            legacy_runner.observation_builder.candidate_cells,
+        )
+
+    def test_e05_unclipped_monotonic_se_distinguishes_high_sinr(self) -> None:
+        trace = _delayed_a3_trace()
+        rolling_runner, rolling_observation = self._configured_runner(
+            candidate_count=3,
+            candidate_order="ranked_v1",
+            observation_schema="rolling_v1",
+            trace=trace,
+        )
+        monotonic_runner, monotonic_observation = self._configured_runner(
+            candidate_count=3,
+            candidate_order="ranked_v1",
+            observation_schema="monotonic_v1",
+            trace=trace,
+        )
+        rolling = rolling_runner.observation_builder.as_dict(
+            rolling_observation
+        )
+        monotonic = monotonic_runner.observation_builder.as_dict(
+            monotonic_observation
+        )
+
+        self.assertAlmostEqual(
+            rolling["serving_spectral_efficiency"], 1.0
+        )
+        self.assertAlmostEqual(
+            rolling["target_spectral_efficiency"], 1.0
+        )
+        self.assertAlmostEqual(rolling["delta_spectral_efficiency"], 0.0)
+        self.assertGreater(
+            monotonic["target_spectral_efficiency"],
+            monotonic["serving_spectral_efficiency"],
+        )
+        self.assertGreater(monotonic["delta_spectral_efficiency"], 0.0)
+        self.assertLess(monotonic["target_spectral_efficiency"], 1.0)
+
+    def test_e06_has_17_global_and_15_features_per_candidate(self) -> None:
+        runner, observation = self._configured_runner(
+            candidate_count=3,
+            candidate_order="ranked_v1",
+            observation_schema="qos_full_v1",
+            trace=_delayed_a3_trace(),
+        )
+        builder = runner.observation_builder
+        values = builder.as_dict(observation)
+
+        self.assertEqual(observation.shape, (62,))
+        self.assertEqual(len(builder.feature_names), 17 + 15 * 3)
+        self.assertTrue(np.all(observation >= builder.low))
+        self.assertTrue(np.all(observation <= builder.high))
+        self.assertAlmostEqual(values["history_coverage_500ms"], 1.0)
+        self.assertAlmostEqual(values["speed_magnitude_kmh"], 0.25)
+        self.assertEqual(values["c1_valid"], 1.0)
+        self.assertEqual(values["c1_is_a3_target"], 1.0)
+        self.assertEqual(values["c2_is_a3_target"], 0.0)
+        self.assertEqual(values["c3_is_a3_target"], 0.0)
+
+    def test_e06_requires_speed_metadata(self) -> None:
+        trace = _twenty_one_cell_trace()
+        trace_without_speed = RadioTrace.from_arrays(
+            trace.rsrp_a3_db,
+            trace.sinr_rate_db,
+            trace_id="missing_speed",
+        )
+        with self.assertRaisesRegex(ValueError, "speed_kmh"):
+            self._configured_runner(
+                candidate_count=3,
+                candidate_order="ranked_v1",
+                observation_schema="qos_full_v1",
+                trace=trace_without_speed,
+            )
+
+    def test_e04_e06_do_not_read_suffix_after_decision(self) -> None:
+        original = _delayed_a3_trace()
+        reference_runner, _ = self._configured_runner(
+            candidate_count=3,
+            candidate_order="ranked_v1",
+            observation_schema="qos_full_v1",
+            trace=original,
+        )
+        decision_tic = reference_runner.engine.decision_point.tic
+        changed_rsrp = np.array(original.rsrp_a3_db, copy=True)
+        changed_sinr = np.array(original.sinr_rate_db, copy=True)
+        changed_rsrp[:, decision_tic + 1 :] += 1000.0
+        changed_sinr[:, decision_tic + 1 :] -= 1000.0
+        changed = RadioTrace.from_arrays(
+            changed_rsrp,
+            changed_sinr,
+            trace_id="changed_suffix",
+            speed_kmh=original.speed_kmh,
+        )
+
+        for schema in ("rolling_v1", "monotonic_v1", "qos_full_v1"):
+            first_runner, first = self._configured_runner(
+                candidate_count=3,
+                candidate_order="ranked_v1",
+                observation_schema=schema,
+                trace=original,
+            )
+            second_runner, second = self._configured_runner(
+                candidate_count=3,
+                candidate_order="ranked_v1",
+                observation_schema=schema,
+                trace=changed,
+            )
+            np.testing.assert_array_equal(first, second)
+            self.assertEqual(
+                first_runner.observation_builder.candidate_cells,
+                second_runner.observation_builder.candidate_cells,
             )
 
 

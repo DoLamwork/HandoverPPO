@@ -170,6 +170,9 @@ def main(root_path: str, args: Namespace) -> int:
     candidate_order = str(
         objective.get("candidate_order_key", "legacy")
     )
+    observation_schema = str(
+        objective.get("observation_schema_key", "legacy_v1")
+    )
     protocol_config = load_protocol_config(data_dir, checkpoint_extra)
     if args.split_seed is None:
         args.split_seed = checkpoint_extra.get("split_seed", 17)
@@ -230,6 +233,7 @@ def main(root_path: str, args: Namespace) -> int:
             gamma_per_second=agent.config.gamma_per_second,
             candidate_count=candidate_count,
             candidate_order=candidate_order,
+            observation_schema=observation_schema,
         )
         env.validate_checkpoint_objective(checkpoint_extra)
         all_rows.extend(

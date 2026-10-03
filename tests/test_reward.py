@@ -29,6 +29,7 @@ def _tick(
         sinr_rate_db=np.array([5.0, -5.0]),
         sinr_rlm_db=np.array([5.0, -5.0]),
         n310_progress=0.0,
+        n311_progress=0.0,
         t310_active=False,
         t310_progress=0.0,
         serving_residence_ticks=0,

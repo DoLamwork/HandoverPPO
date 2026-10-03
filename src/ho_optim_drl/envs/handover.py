@@ -56,6 +56,7 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
         gamma_per_second: float = 0.99,
         candidate_count: int = 10,
         candidate_order: str = "legacy",
+        observation_schema: str = "legacy_v1",
     ) -> None:
         super().__init__()
         if protocol_config is None and data_dir is not None:
@@ -80,6 +81,7 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
             topology=topology,
             candidate_count=candidate_count,
             candidate_order=candidate_order,
+            observation_schema=observation_schema,
         )
         reward_model = HandoverRewardModel(self.config, reward_config)
         self.transition_builder = MacroTransitionBuilder(
@@ -131,9 +133,11 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
                 "a3_topology109_v1"
                 if builder.candidate_count == 10
                 and builder.candidate_order == "legacy"
+                and builder.observation_schema == "legacy_v1"
                 else (
                     f"a3_topology_k{builder.candidate_count}_"
-                    f"{builder.candidate_order}_v1"
+                    f"{builder.candidate_order}_"
+                    f"{builder.observation_schema}"
                 )
             ),
             "trigger": "completed_a3_ttt",
@@ -141,6 +145,7 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
             "candidate_order": builder.candidate_order_spec,
             "candidate_order_key": builder.candidate_order,
             "candidate_count": builder.candidate_count,
+            "observation_schema_key": builder.observation_schema_spec,
             "full_candidate_pool_size": builder.MAX_CANDIDATES,
             "observation_size": builder.size,
             "observation_features": list(builder.feature_names),
@@ -170,7 +175,11 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
             "observation_features",
             "action_names",
         )
-        optional_fields = ("candidate_order", "candidate_count")
+        optional_fields = (
+            "candidate_order",
+            "candidate_count",
+            "observation_schema_key",
+        )
         mismatches = [
             field_name
             for field_name in fields
@@ -382,6 +391,7 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
                 self._data_dir,
                 pair.rsrp_file,
                 pair.sinr_file,
+                speed_kmh=pair.speed_kmh,
             )
         if trace.delta_t_ms != self.config.delta_t_ms:
             raise ValueError(

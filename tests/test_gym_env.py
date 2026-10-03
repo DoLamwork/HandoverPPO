@@ -94,6 +94,38 @@ class HandoverGymContractTests(unittest.TestCase):
             "ranked_v1",
         )
 
+    def test_p2_schema_controls_observation_and_checkpoint_contract(self) -> None:
+        trace = _full_candidate_trace("p2_full")
+        trace = RadioTrace.from_arrays(
+            trace.rsrp_a3_db,
+            trace.sinr_rate_db,
+            trace_id=trace.trace_id,
+            speed_kmh=50.0,
+        )
+        full_env = HandoverSMDPEnv(
+            traces=[trace],
+            candidate_count=3,
+            candidate_order="ranked_v1",
+            observation_schema="qos_full_v1",
+        )
+        observation, _ = full_env.reset()
+
+        self.assertEqual(observation.shape, (62,))
+        self.assertEqual(
+            full_env.objective_spec["observation_schema_key"],
+            "qos_full_v1",
+        )
+        rolling_env = HandoverSMDPEnv(
+            traces=[trace],
+            candidate_count=3,
+            candidate_order="ranked_v1",
+            observation_schema="rolling_v1",
+        )
+        with self.assertRaisesRegex(ValueError, "observation"):
+            rolling_env.validate_checkpoint_objective(
+                {"objective": full_env.objective_spec}
+            )
+
     def test_spaces_reset_and_terminal_step_follow_gymnasium_contract(self) -> None:
         trace = _decision_trace("terminal", num_samples=8)
         env = HandoverSMDPEnv(Config(), traces=[trace])

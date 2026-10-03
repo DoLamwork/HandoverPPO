@@ -43,6 +43,7 @@ class ProtocolSnapshot:
     sinr_rate_db: np.ndarray
     sinr_rlm_db: np.ndarray
     n310_progress: float
+    n311_progress: float
     t310_active: bool
     t310_progress: float
     serving_residence_ticks: int

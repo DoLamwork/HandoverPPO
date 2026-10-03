@@ -101,6 +101,7 @@ class ObservationValueTests(unittest.TestCase):
                 sinr_rate_db=np.array([3.0, 4.0]),
                 sinr_rlm_db=np.array([3.0, 4.0]),
                 n310_progress=0.0,
+                n311_progress=0.0,
                 t310_active=False,
                 t310_progress=0.0,
                 serving_residence_ticks=20,

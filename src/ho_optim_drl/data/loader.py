@@ -16,6 +16,8 @@ def load_radio_trace(
     data_dir: str,
     rsrp_file: str,
     sinr_file: str,
+    *,
+    speed_kmh: float | None = None,
 ) -> RadioTrace:
     """
     Load one trajectory into three explicit protocol streams.
@@ -46,6 +48,7 @@ def load_radio_trace(
         sinr_rlm_db=sinr_raw.T,
         delta_t_ms=config.delta_t_ms,
         trace_id=trace_id,
+        speed_kmh=speed_kmh,
     )
 
 

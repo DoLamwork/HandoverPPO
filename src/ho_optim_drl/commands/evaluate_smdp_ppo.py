@@ -30,6 +30,9 @@ def main(root_path: str, args: Namespace) -> int:
     candidate_order = str(
         objective.get("candidate_order_key", "legacy")
     )
+    observation_schema = str(
+        objective.get("observation_schema_key", "legacy_v1")
+    )
     selected_pairs = checkpoint_pairs(
         data_dir, checkpoint_path, checkpoint_extra, split=args.split,
         speeds=args.speeds, split_seed=args.split_seed,
@@ -42,6 +45,7 @@ def main(root_path: str, args: Namespace) -> int:
         gamma_per_second=agent.config.gamma_per_second,
         candidate_count=candidate_count,
         candidate_order=candidate_order,
+        observation_schema=observation_schema,
     )
     env.validate_checkpoint_objective(checkpoint_extra)
     metrics = agent.evaluate(env)

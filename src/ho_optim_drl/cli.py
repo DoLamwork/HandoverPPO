@@ -66,6 +66,35 @@ def run(argv=None) -> int:
     audit_parser.add_argument(
         "--output-dir", default="results/audit/p1_candidates_s17"
     )
+    observation_audit_parser = subparsers.add_parser(
+        "audit_observations",
+        help="Audit P2 observation saturation and causal prediction error.",
+    )
+    observation_audit_parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    observation_audit_parser.add_argument("--speeds", type=int, nargs="+", default=None)
+    observation_audit_parser.add_argument(
+        "--split", choices=("train", "validation"), default="train"
+    )
+    observation_audit_parser.add_argument("--split-seed", type=int, default=17)
+    observation_audit_parser.add_argument("--sample-seed", type=int, default=17)
+    observation_audit_parser.add_argument("--routes-per-speed", type=int, default=20)
+    observation_audit_parser.add_argument(
+        "--max-decisions-per-route", type=int, default=20
+    )
+    observation_audit_parser.add_argument(
+        "--candidate-count", type=int, choices=(3, 5, 10), default=3
+    )
+    observation_audit_parser.add_argument(
+        "--candidate-order", choices=("legacy", "ranked_v1"), default="ranked_v1"
+    )
+    observation_audit_parser.add_argument(
+        "--observation-schema",
+        choices=("rolling_v1", "monotonic_v1", "qos_full_v1"),
+        default="qos_full_v1",
+    )
+    observation_audit_parser.add_argument(
+        "--output-dir", default="results/audit/p2_observations"
+    )
     summary_parser = subparsers.add_parser(
         "summarize_ablation",
         help="Validate and summarize completed PPO screening arms.",
@@ -132,6 +161,20 @@ def run(argv=None) -> int:
         help=(
             "legacy keeps the topology pool order; ranked_v1 promotes the "
             "best-current and causal +90 ms projected alternatives."
+        ),
+    )
+    train_parser.add_argument(
+        "--observation-schema",
+        choices=(
+            "legacy_v1",
+            "rolling_v1",
+            "monotonic_v1",
+            "qos_full_v1",
+        ),
+        default="legacy_v1",
+        help=(
+            "Observation ablation: legacy, cell-ID rolling history, "
+            "monotonic normalization, or the full QoS schema."
         ),
     )
     train_parser.add_argument("--rollout-steps", type=int, default=1024)
@@ -317,6 +360,10 @@ def run(argv=None) -> int:
         from ho_optim_drl.commands import audit_candidates
 
         return audit_candidates.main(root_path, args)
+    if args.command == "audit_observations":
+        from ho_optim_drl.commands import audit_observations
+
+        return audit_observations.main(root_path, args)
     if args.command == "summarize_ablation":
         from ho_optim_drl.commands import summarize_ablation
 

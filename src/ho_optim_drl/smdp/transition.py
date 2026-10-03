@@ -140,6 +140,7 @@ class MacroTransitionBuilder:
         """Reset all components and advance to the first A3 decision."""
         self.engine.reset(trace)
         self.observation_builder.reset()
+        self.observation_builder.start_episode(trace)
         self.reward_model.reset()
         self._current_observation = None
         self._terminated = False

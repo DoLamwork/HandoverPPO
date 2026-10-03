@@ -284,6 +284,7 @@ def build_3gpp_validation_reference(
     gamma_per_second: float,
     candidate_count: int = 10,
     candidate_order: str = "legacy",
+    observation_schema: str = "legacy_v1",
 ) -> dict[str, Any]:
     """Evaluate Always-HO once as the QoS reference for checkpoint selection."""
     descriptors = [
@@ -301,6 +302,7 @@ def build_3gpp_validation_reference(
         gamma_per_second=gamma_per_second,
         candidate_count=candidate_count,
         candidate_order=candidate_order,
+        observation_schema=observation_schema,
     )
     rows = benchmark_policy(
         reference_env,
@@ -406,12 +408,31 @@ def write_experiment_config(
         ],
         "observation_schema": {
             "name": train_env.objective_spec["version"],
+            "key": builder.observation_schema,
             "size": int(builder.size),
             "features": list(builder.feature_names),
         },
         "history_windows": {
             "trend_ticks": observation_config["trend_window_ticks"],
             "trend_ms": observation_config["trend_window_ticks"] * dt_ms,
+            "short_lookback_ticks": observation_config[
+                "short_window_ticks"
+            ],
+            "short_lookback_ms": observation_config[
+                "short_window_ticks"
+            ] * dt_ms,
+            "short_inclusive_samples": observation_config[
+                "short_window_ticks"
+            ] + 1,
+            "long_lookback_ticks": observation_config[
+                "long_window_ticks"
+            ],
+            "long_lookback_ms": observation_config[
+                "long_window_ticks"
+            ] * dt_ms,
+            "long_inclusive_samples": observation_config[
+                "long_window_ticks"
+            ] + 1,
             "history_ticks": observation_config["history_window_ticks"],
             "history_ms": observation_config["history_window_ticks"] * dt_ms,
         },
@@ -654,6 +675,7 @@ def main(root_path: str, args: Namespace) -> int:
         gamma_per_second=ppo_config.gamma_per_second,
         candidate_count=args.candidate_count,
         candidate_order=args.candidate_order,
+        observation_schema=args.observation_schema,
     )
     validation_env = HandoverSMDPEnv(
         protocol_config,
@@ -662,6 +684,7 @@ def main(root_path: str, args: Namespace) -> int:
         gamma_per_second=ppo_config.gamma_per_second,
         candidate_count=args.candidate_count,
         candidate_order=args.candidate_order,
+        observation_schema=args.observation_schema,
     )
     agent = SMDPPPO(
         train_env.observation_space.shape[0],
@@ -703,6 +726,7 @@ def main(root_path: str, args: Namespace) -> int:
         gamma_per_second=ppo_config.gamma_per_second,
         candidate_count=args.candidate_count,
         candidate_order=args.candidate_order,
+        observation_schema=args.observation_schema,
     )
     validation_reference_path = os.path.join(
         output_dir,
@@ -866,6 +890,7 @@ def main(root_path: str, args: Namespace) -> int:
             gamma_per_second=ppo_config.gamma_per_second,
             candidate_count=args.candidate_count,
             candidate_order=args.candidate_order,
+            observation_schema=args.observation_schema,
         )
         print("Running held-out test evaluation...", flush=True)
         test_metrics = selected_agent.evaluate(test_env)

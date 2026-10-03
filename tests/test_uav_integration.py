@@ -206,7 +206,17 @@ class IntegratedDatasetTests(unittest.TestCase):
 class IntegratedCommandTests(unittest.TestCase):
     def test_pipeline_commands_are_available_outside_project(self):
         with TemporaryDirectory() as directory:
-            for command in ("generate_data", "prepare_data", "train_ppo", "evaluate_ppo", "benchmark", "validate_3gpp"):
+            for command in (
+                "generate_data",
+                "prepare_data",
+                "audit_candidates",
+                "audit_observations",
+                "summarize_ablation",
+                "train_ppo",
+                "evaluate_ppo",
+                "benchmark",
+                "validate_3gpp",
+            ):
                 with self.subTest(command=command):
                     result = subprocess.run([sys.executable, "-m", "ho_optim_drl", command, "--help"],
                                             cwd=directory, capture_output=True, text=True,

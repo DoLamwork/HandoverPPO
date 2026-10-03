@@ -90,6 +90,7 @@ class HandoverEngine(A3ReferenceSimulator):
         )
 
         n310_progress = self._counter_progress("n310")
+        n311_progress = self._counter_progress("n311")
         t310_progress = self._counter_progress("t310")
         residence_ticks = max(
             0, sample_tic - self._serving_residence_start_tic
@@ -114,6 +115,7 @@ class HandoverEngine(A3ReferenceSimulator):
             sinr_rate_db=sinr_rate_db,
             sinr_rlm_db=sinr_rlm_db,
             n310_progress=float(n310_progress),
+            n311_progress=float(n311_progress),
             t310_active=self.cntr["t310"].pending,
             t310_progress=float(t310_progress),
             serving_residence_ticks=residence_ticks,

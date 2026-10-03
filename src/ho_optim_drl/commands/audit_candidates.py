@@ -202,13 +202,16 @@ def _best_stay_or_c1(
 def _policy_candidate_configuration(
     agent: SMDPPPO,
     checkpoint_extra: dict[str, Any],
-) -> tuple[int, str]:
+) -> tuple[int, str, str]:
     objective = checkpoint_extra.get("objective", {})
     count = int(objective.get("candidate_count", agent.model.action_size - 1))
     order = str(objective.get("candidate_order_key", "legacy"))
+    observation_schema = str(
+        objective.get("observation_schema_key", "legacy_v1")
+    )
     if count not in _SHORTLIST_SIZES:
         raise ValueError(f"Unsupported policy candidate count: {count}.")
-    return count, order
+    return count, order, observation_schema
 
 
 def _apply_behavior_action(
@@ -346,6 +349,7 @@ def _collect_source_states(
     agent: SMDPPPO | None,
     policy_candidate_count: int,
     policy_candidate_order: str,
+    policy_observation_schema: str = "legacy_v1",
 ) -> list[dict[str, Any]]:
     states: list[dict[str, Any]] = []
     for route_number, pair in enumerate(pairs, start=1):
@@ -354,6 +358,7 @@ def _collect_source_states(
             data_dir,
             pair.rsrp_file,
             pair.sinr_file,
+            speed_kmh=pair.speed_kmh,
         )
         engine = HandoverEngine(protocol_config)
         engine.reset(trace)
@@ -368,9 +373,12 @@ def _collect_source_states(
             topology=topology,
             candidate_count=policy_candidate_count,
             candidate_order=policy_candidate_order,
+            observation_schema=policy_observation_schema,
         )
         audit_builder.reset()
         policy_builder.reset()
+        audit_builder.start_episode(trace)
+        policy_builder.start_episode(trace)
         decision_index = 0
         sampled = 0
         while True:
@@ -582,15 +590,19 @@ def main(root_path: str, args: Namespace) -> int:
         agent=None,
         policy_candidate_count=10,
         policy_candidate_order="legacy",
+        policy_observation_schema="legacy_v1",
     )
     policy_configuration = None
     if agent is not None:
-        policy_count, policy_order = _policy_candidate_configuration(
-            agent, checkpoint_extra
+        policy_count, policy_order, policy_observation_schema = (
+            _policy_candidate_configuration(
+                agent, checkpoint_extra
+            )
         )
         policy_configuration = {
             "candidate_count": policy_count,
             "candidate_order": policy_order,
+            "observation_schema": policy_observation_schema,
             "observation_size": agent.model.observation_size,
             "action_size": agent.model.action_size,
         }
@@ -607,6 +619,7 @@ def main(root_path: str, args: Namespace) -> int:
                 agent=agent,
                 policy_candidate_count=policy_count,
                 policy_candidate_order=policy_order,
+                policy_observation_schema=policy_observation_schema,
             )
         )
 
