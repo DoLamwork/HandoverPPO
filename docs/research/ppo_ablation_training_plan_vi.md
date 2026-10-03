@@ -1,12 +1,14 @@
 # Kế hoạch kiểm thử các bản PPO tiếp theo
 
 Ngày lập: 02/10/2026.
-Trạng thái: P0 và P1 đã hoàn tất. P2 đã hoàn thành code E04-E06, audit
-observation train/validation và smoke một PPO update; screening 100k chưa chạy.
-K*=3/ranked_v1 được khóa làm nền P2. P3-P5 vẫn là kế hoạch. Báo cáo:
+Trạng thái: P0-P2 đã hoàn tất, gồm screening 100k E04-E06. P3 đã hoàn thành
+code/audit/unit test/smoke E07-E10; screening 100k chưa chạy. K*=3,
+`ranked_v1` và observation `qos_full_v1` được khóa làm nền P3. P4-P5 vẫn là
+kế hoạch. Báo cáo:
 `docs/research/p0_experiment_baseline_report_vi.md` và
 `docs/research/p1_candidate_ablation_report_vi.md` và
-`docs/research/p2_observation_ablation_report_vi.md`.
+`docs/research/p2_observation_ablation_report_vi.md` và
+`docs/research/p3_reward_ablation_report_vi.md`.
 Tài liệu thiết kế: docs/research/ppo_qos_observation_reward_design_vi.md.
 
 ## 1. Mục tiêu và nguyên tắc so sánh
@@ -363,9 +365,9 @@ Run lịch sử 300k mất 12.570,9 giây ~3,49 giờ, gồm validation. Suy tuy
 3. ~~Train E00, E01, E02, E03 ở 100k seed17.~~ Hoàn tất 03/10/2026.
 4. ~~Chốt K* trên validation/coverage.~~ K*=3 làm nền P2; chưa phải kết luận
    hiệu năng cuối.
-5. Triển khai/audit/smoke E04-E06: hoàn tất. Tiếp theo train screening 100k
-   E04→E05→E06 với K=3/ranked_v1 và reward cũ.
-6. Train E07-E10, giữ K*/observation/mạng.
+5. ~~Triển khai/audit/smoke và screening 100k E04-E06.~~ Hoàn tất.
+6. Triển khai/audit/unit test/smoke E07-E10: hoàn tất. Tiếp theo train
+   screening 100k E07→E08→E09→E10, giữ K*/observation/mạng.
 7. Bổ sung E11 để hoàn thành interaction 2x2.
 8. Xác nhận tối đa ba cấu hình với ba seed/300k.
 9. Chỉ chạy P5 nếu còn một vấn đề cụ thể cần giải thích.

@@ -10,6 +10,10 @@ import os
 from ho_optim_drl import HandoverSMDPEnv
 from ho_optim_drl.agents.ppo import SMDPPPO
 from ho_optim_drl.data.project import checkpoint_pairs, load_protocol_config
+from ho_optim_drl.smdp import (
+    LEGACY_REWARD_SCHEMA,
+    reward_config_from_dict,
+)
 
 
 def main(root_path: str, args: Namespace) -> int:
@@ -33,6 +37,11 @@ def main(root_path: str, args: Namespace) -> int:
     observation_schema = str(
         objective.get("observation_schema_key", "legacy_v1")
     )
+    reward_schema = str(objective.get("reward", LEGACY_REWARD_SCHEMA))
+    reward_config = reward_config_from_dict(
+        reward_schema,
+        objective.get("reward_config"),
+    )
     selected_pairs = checkpoint_pairs(
         data_dir, checkpoint_path, checkpoint_extra, split=args.split,
         speeds=args.speeds, split_seed=args.split_seed,
@@ -46,7 +55,10 @@ def main(root_path: str, args: Namespace) -> int:
         candidate_count=candidate_count,
         candidate_order=candidate_order,
         observation_schema=observation_schema,
+        reward_schema=reward_schema,
+        reward_config=reward_config,
     )
+    env.load_reward_state(checkpoint_extra.get("reward_state"))
     env.validate_checkpoint_objective(checkpoint_extra)
     metrics = agent.evaluate(env)
     result = {

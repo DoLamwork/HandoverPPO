@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import asdict
 import os
 from collections.abc import Sequence
 from typing import Any
@@ -25,11 +26,14 @@ from ho_optim_drl.smdp import (
     A3ObservationConfig,
     HandoverAction,
     HandoverRewardConfig,
-    HandoverRewardModel,
+    LEGACY_REWARD_SCHEMA,
     MacroTransition,
     MacroTransitionBuilder,
     RewardBreakdown,
+    SUPPORTED_REWARD_SCHEMAS,
     TopologyCandidateObservationBuilder,
+    TrajectoryQoSRewardConfig,
+    build_reward_model,
 )
 
 
@@ -52,7 +56,10 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
         data_dir: str | os.PathLike[str] | None = None,
         trace_pairs: Sequence[TracePair] | None = None,
         observation_config: A3ObservationConfig | None = None,
-        reward_config: HandoverRewardConfig | None = None,
+        reward_config: (
+            HandoverRewardConfig | TrajectoryQoSRewardConfig | None
+        ) = None,
+        reward_schema: str = LEGACY_REWARD_SCHEMA,
         gamma_per_second: float = 0.99,
         candidate_count: int = 10,
         candidate_order: str = "legacy",
@@ -83,7 +90,13 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
             candidate_order=candidate_order,
             observation_schema=observation_schema,
         )
-        reward_model = HandoverRewardModel(self.config, reward_config)
+        if reward_schema not in SUPPORTED_REWARD_SCHEMAS:
+            raise ValueError(f"Unsupported reward schema: {reward_schema!r}.")
+        reward_model = build_reward_model(
+            self.config,
+            reward_schema,
+            reward_config,
+        )
         self.transition_builder = MacroTransitionBuilder(
             HandoverEngine(self.config),
             observation_builder,
@@ -125,6 +138,17 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
         return self._current_trace
 
     @property
+    def reward_state(self) -> dict[str, Any]:
+        """Return dynamic reward state for checkpointing and audit."""
+        return self.transition_builder.reward_model.state_dict()
+
+    def load_reward_state(self, state: dict[str, Any] | None) -> None:
+        """Restore dynamic reward state and freeze it for evaluation."""
+        reward_model = self.transition_builder.reward_model
+        reward_model.load_state_dict(state)
+        reward_model.begin_rollout()
+
+    @property
     def objective_spec(self) -> dict[str, Any]:
         """Return checkpoint/report metadata that fixes action semantics."""
         builder = self.transition_builder.observation_builder
@@ -155,7 +179,10 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
                     : builder.candidate_count + 1
                 ]
             ],
-            "reward": "legacy_handover_reward_v1",
+            "reward": self.transition_builder.reward_model.schema_name,
+            "reward_config": asdict(
+                self.transition_builder.reward_model.config
+            ),
             "discount_mode": "intra_macro_time_consistent_v1",
         }
 
@@ -174,11 +201,13 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
             "observation_size",
             "observation_features",
             "action_names",
+            "reward",
         )
         optional_fields = (
             "candidate_order",
             "candidate_count",
             "observation_schema_key",
+            "reward_config",
         )
         mismatches = [
             field_name
@@ -486,12 +515,7 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
 
     @staticmethod
     def _reward_dict(reward: RewardBreakdown) -> dict[str, float]:
-        return {
-            "rate": float(reward.rate),
-            "rlf": float(reward.rlf),
-            "ping_pong": float(reward.ping_pong),
-            "total": float(reward.total),
-        }
+        return reward.as_dict()
 
     @staticmethod
     def _decision_dict(

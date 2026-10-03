@@ -10,7 +10,7 @@ from gymnasium.utils.env_checker import check_env
 
 from ho_optim_drl import Config, HandoverSMDPEnv
 from ho_optim_drl.data import RadioTrace, discover_trace_pairs
-from ho_optim_drl.smdp import HandoverAction
+from ho_optim_drl.smdp import HandoverAction, P3_E09_REWARD_SCHEMA
 
 
 def _decision_trace(
@@ -124,6 +124,42 @@ class HandoverGymContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "observation"):
             rolling_env.validate_checkpoint_objective(
                 {"objective": full_env.objective_spec}
+            )
+
+    def test_p3_reward_schema_is_part_of_checkpoint_contract(self) -> None:
+        trace = _full_candidate_trace("p3_reward")
+        trace = RadioTrace.from_arrays(
+            trace.rsrp_a3_db,
+            trace.sinr_rate_db,
+            trace_id=trace.trace_id,
+            speed_kmh=50.0,
+        )
+        env = HandoverSMDPEnv(
+            traces=[trace],
+            candidate_count=3,
+            candidate_order="ranked_v1",
+            observation_schema="qos_full_v1",
+            reward_schema=P3_E09_REWARD_SCHEMA,
+        )
+
+        objective = env.objective_spec
+
+        self.assertEqual(objective["reward"], P3_E09_REWARD_SCHEMA)
+        self.assertEqual(
+            objective["reward_config"][
+                "rlf_recovery_penalty_per_second"
+            ],
+            1.0,
+        )
+        legacy_env = HandoverSMDPEnv(
+            traces=[trace],
+            candidate_count=3,
+            candidate_order="ranked_v1",
+            observation_schema="qos_full_v1",
+        )
+        with self.assertRaisesRegex(ValueError, "reward"):
+            legacy_env.validate_checkpoint_objective(
+                {"objective": objective}
             )
 
     def test_spaces_reset_and_terminal_step_follow_gymnasium_contract(self) -> None:

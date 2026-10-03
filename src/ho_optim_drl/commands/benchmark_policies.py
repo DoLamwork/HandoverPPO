@@ -24,7 +24,11 @@ from ho_optim_drl.evaluation import (
     build_paired_comparisons,
     write_benchmark_outputs,
 )
-from ho_optim_drl.smdp import HandoverAction
+from ho_optim_drl.smdp import (
+    HandoverAction,
+    LEGACY_REWARD_SCHEMA,
+    reward_config_from_dict,
+)
 
 
 def build_benchmark_policies(agent: SMDPPPO) -> tuple[BenchmarkPolicy, ...]:
@@ -173,6 +177,11 @@ def main(root_path: str, args: Namespace) -> int:
     observation_schema = str(
         objective.get("observation_schema_key", "legacy_v1")
     )
+    reward_schema = str(objective.get("reward", LEGACY_REWARD_SCHEMA))
+    reward_config = reward_config_from_dict(
+        reward_schema,
+        objective.get("reward_config"),
+    )
     protocol_config = load_protocol_config(data_dir, checkpoint_extra)
     if args.split_seed is None:
         args.split_seed = checkpoint_extra.get("split_seed", 17)
@@ -234,7 +243,10 @@ def main(root_path: str, args: Namespace) -> int:
             candidate_count=candidate_count,
             candidate_order=candidate_order,
             observation_schema=observation_schema,
+            reward_schema=reward_schema,
+            reward_config=reward_config,
         )
+        env.load_reward_state(checkpoint_extra.get("reward_state"))
         env.validate_checkpoint_objective(checkpoint_extra)
         all_rows.extend(
             benchmark_policy(

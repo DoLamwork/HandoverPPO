@@ -158,10 +158,22 @@ def benchmark_policy(
                 "controlled_reward_rate": controlled_reward.rate,
                 "controlled_reward_rlf": controlled_reward.rlf,
                 "controlled_reward_ping_pong": controlled_reward.ping_pong,
+                "controlled_reward_handover": controlled_reward.handover,
+                "controlled_reward_handover_failure": (
+                    controlled_reward.handover_failure
+                ),
+                "controlled_reward_rlf_recovery": (
+                    controlled_reward.rlf_recovery
+                ),
                 "controlled_return": controlled_reward.total,
                 "full_trace_reward_rate": full_reward.rate,
                 "full_trace_reward_rlf": full_reward.rlf,
                 "full_trace_reward_ping_pong": full_reward.ping_pong,
+                "full_trace_reward_handover": full_reward.handover,
+                "full_trace_reward_handover_failure": (
+                    full_reward.handover_failure
+                ),
+                "full_trace_reward_rlf_recovery": full_reward.rlf_recovery,
                 "full_trace_return": full_reward.total,
                 "estimated_rate_mbps": float(
                     statistics["estimated_rate_mbps"]
@@ -250,6 +262,21 @@ def aggregate_benchmark_rows(
             "mean_ping_pong_penalty": _mean(
                 group,
                 "controlled_reward_ping_pong",
+            ),
+            "mean_handover_penalty": _mean(
+                group,
+                "controlled_reward_handover",
+                default=0.0,
+            ),
+            "mean_handover_failure_penalty": _mean(
+                group,
+                "controlled_reward_handover_failure",
+                default=0.0,
+            ),
+            "mean_rlf_recovery_penalty": _mean(
+                group,
+                "controlled_reward_rlf_recovery",
+                default=0.0,
             ),
             "mean_estimated_rate_mbps": _mean(
                 group,
@@ -436,11 +463,27 @@ def _reward_from_dict(values: dict[str, Any]) -> RewardBreakdown:
         rate=float(values["rate"]),
         rlf=float(values["rlf"]),
         ping_pong=float(values["ping_pong"]),
+        handover=float(values.get("handover", 0.0)),
+        handover_failure=float(values.get("handover_failure", 0.0)),
+        rlf_recovery=float(values.get("rlf_recovery", 0.0)),
     )
 
 
-def _mean(rows: Sequence[dict[str, Any]], field: str) -> float:
-    values = np.asarray([float(row[field]) for row in rows], dtype=np.float64)
+def _mean(
+    rows: Sequence[dict[str, Any]],
+    field: str,
+    *,
+    default: float | None = None,
+) -> float:
+    values = np.asarray(
+        [
+            float(row[field])
+            if default is None
+            else float(row.get(field, default))
+            for row in rows
+        ],
+        dtype=np.float64,
+    )
     result = float(np.mean(values))
     if not math.isfinite(result):
         raise RuntimeError(f"Non-finite aggregate for {field}.")

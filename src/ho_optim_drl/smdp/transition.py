@@ -141,7 +141,7 @@ class MacroTransitionBuilder:
         self.engine.reset(trace)
         self.observation_builder.reset()
         self.observation_builder.start_episode(trace)
-        self.reward_model.reset()
+        self.reward_model.reset(trace)
         self._current_observation = None
         self._terminated = False
         self._uncontrolled_duration_ticks = 0

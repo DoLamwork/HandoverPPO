@@ -50,6 +50,8 @@ class EpisodeRecord:
     episode_return: float
     macro_steps: int
     duration_seconds: float
+    speed_kmh: int | None = None
+    relative_rate_ratio: float | None = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +91,9 @@ class EvaluationMetrics:
     )
     action_counts: dict[str, int] = field(default_factory=dict)
     action_fractions: dict[str, float] = field(default_factory=dict)
+    mean_handover_penalty: float = 0.0
+    mean_handover_failure_penalty: float = 0.0
+    mean_rlf_recovery_penalty: float = 0.0
 
 
 class ValidationCheckpointManager:
@@ -648,6 +653,10 @@ class SMDPPPO:
         if progress_interval <= 0:
             raise ValueError("progress_interval must be positive.")
 
+        # Adaptive reward parameters are snapshotted once and remain fixed
+        # for every transition collected in this rollout.
+        env.transition_builder.reward_model.begin_rollout()
+
         if (
             self._collector_env_id != id(env)
             or self._collector_observation is None
@@ -768,12 +777,24 @@ class SMDPPPO:
             self.total_macro_steps += 1
 
             if terminated or truncated:
+                episode_metrics = info.get("episode_metrics", {})
+                relative_rate_ratio = (
+                    float(episode_metrics["achieved_capacity_rel"]) / 100.0
+                    if "achieved_capacity_rel" in episode_metrics
+                    else None
+                )
                 completed_episodes.append(
                     EpisodeRecord(
                         trace_id=str(info["trace_id"]),
                         episode_return=float(info["episode_return"]),
                         macro_steps=int(info["episode_macro_steps"]),
                         duration_seconds=float(info["episode_duration_seconds"]),
+                        speed_kmh=(
+                            int(info["speed_kmh"])
+                            if "speed_kmh" in info
+                            else None
+                        ),
+                        relative_rate_ratio=relative_rate_ratio,
                     )
                 )
                 next_observation, _ = env.reset()
@@ -1002,6 +1023,9 @@ class SMDPPPO:
         rate_rewards: list[float] = []
         rlf_penalties: list[float] = []
         ping_pong_penalties: list[float] = []
+        handover_penalties: list[float] = []
+        handover_failure_penalties: list[float] = []
+        rlf_recovery_penalties: list[float] = []
         macro_steps: list[int] = []
         estimated_rates: list[float] = []
         max_estimated_rates: list[float] = []
@@ -1023,6 +1047,7 @@ class SMDPPPO:
         total_ping_pong = 0
         skipped = 0
         self.model.eval()
+        env.transition_builder.reward_model.begin_rollout()
 
         for trace_index in range(env.num_trajectories):
             if max_episodes is not None and len(returns) >= max_episodes:
@@ -1040,6 +1065,9 @@ class SMDPPPO:
             rate_reward = 0.0
             rlf_penalty = 0.0
             ping_pong_penalty = 0.0
+            handover_penalty = 0.0
+            handover_failure_penalty = 0.0
+            rlf_recovery_penalty = 0.0
             episode_steps = 0
             while True:
                 action = self.predict(
@@ -1059,6 +1087,15 @@ class SMDPPPO:
                 rate_reward += float(info["reward"]["rate"])
                 rlf_penalty += float(info["reward"]["rlf"])
                 ping_pong_penalty += float(info["reward"]["ping_pong"])
+                handover_penalty += float(
+                    info["reward"].get("handover", 0.0)
+                )
+                handover_failure_penalty += float(
+                    info["reward"].get("handover_failure", 0.0)
+                )
+                rlf_recovery_penalty += float(
+                    info["reward"].get("rlf_recovery", 0.0)
+                )
                 episode_steps += 1
                 total_actions += 1
                 evaluation_action_counts[HandoverAction(action).name] += 1
@@ -1107,6 +1144,9 @@ class SMDPPPO:
             rate_rewards.append(rate_reward)
             rlf_penalties.append(rlf_penalty)
             ping_pong_penalties.append(ping_pong_penalty)
+            handover_penalties.append(handover_penalty)
+            handover_failure_penalties.append(handover_failure_penalty)
+            rlf_recovery_penalties.append(rlf_recovery_penalty)
             macro_steps.append(episode_steps)
 
         if invalidates_active_collector:
@@ -1189,6 +1229,13 @@ class SMDPPPO:
                 )
                 for action in list(HandoverAction)[: self.model.action_size]
             },
+            mean_handover_penalty=float(np.mean(handover_penalties)),
+            mean_handover_failure_penalty=float(
+                np.mean(handover_failure_penalties)
+            ),
+            mean_rlf_recovery_penalty=float(
+                np.mean(rlf_recovery_penalties)
+            ),
         )
 
     def train(
@@ -1235,6 +1282,8 @@ class SMDPPPO:
                 progress_interval=progress_interval,
             )
             update_metrics = self.update(buffer)
+            reward_model = env.transition_builder.reward_model
+            dual_update = reward_model.update_dual(episodes)
             trace_ids = [
                 str(trace_id)
                 for trace_id in buffer.trace_ids[: buffer.size]
@@ -1259,6 +1308,8 @@ class SMDPPPO:
                 ),
                 **asdict(update_metrics),
             }
+            if dual_update is not None:
+                record["dual_update"] = dual_update
             self._emit(
                 progress_callback,
                 {
@@ -1271,6 +1322,12 @@ class SMDPPPO:
                 validation_env is not None
                 and self.total_macro_steps >= next_evaluation
             ):
+                reward_state = reward_model.state_dict()
+                validation_env.load_reward_state(reward_state)
+                if checkpoint_manager is not None:
+                    checkpoint_manager.checkpoint_extra["reward_state"] = (
+                        reward_state
+                    )
                 self._emit(
                     progress_callback,
                     {

@@ -177,6 +177,29 @@ def run(argv=None) -> int:
             "monotonic normalization, or the full QoS schema."
         ),
     )
+    train_parser.add_argument(
+        "--reward-schema",
+        choices=(
+            "legacy_handover_reward_v1",
+            "trajectory_qos_reward_v1",
+            "trajectory_qos_events_reward_v1",
+            "trajectory_qos_recovery_reward_v1",
+            "trajectory_qos_dual_reward_v1",
+        ),
+        default="legacy_handover_reward_v1",
+        help=(
+            "Reward ablation: legacy, trajectory-normalized QoS utility, "
+            "rescaled events, recovery-time cost, or per-speed dual QoS."
+        ),
+    )
+    train_parser.add_argument("--dual-target-ratio", type=float, default=0.98)
+    train_parser.add_argument("--dual-learning-rate", type=float, default=0.5)
+    train_parser.add_argument(
+        "--dual-max-coefficient", type=float, default=10.0
+    )
+    train_parser.add_argument(
+        "--dual-min-episodes-per-speed", type=int, default=4
+    )
     train_parser.add_argument("--rollout-steps", type=int, default=1024)
     train_parser.add_argument("--batch-size", type=int, default=128)
     train_parser.add_argument("--update-epochs", type=int, default=4)

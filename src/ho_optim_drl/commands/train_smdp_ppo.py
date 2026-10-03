@@ -34,7 +34,11 @@ from ho_optim_drl.evaluation import (
     aggregate_benchmark_rows,
     benchmark_policy,
 )
-from ho_optim_drl.smdp import HandoverAction
+from ho_optim_drl.smdp import (
+    HandoverAction,
+    LEGACY_REWARD_SCHEMA,
+    trajectory_reward_config,
+)
 
 
 def _sha256_file(path: str) -> str:
@@ -439,6 +443,28 @@ def write_experiment_config(
         "normalization": observation_config,
         "reward_schema": train_env.objective_spec["reward"],
         "reward_weights": asdict(reward_config),
+        "reward_normalization": {
+            "mode": (
+                "fixed_rate_scale_mbps"
+                if train_env.objective_spec["reward"]
+                == LEGACY_REWARD_SCHEMA
+                else "privileged_full_trace_best_rate_integral"
+            ),
+            "actor_critic_input": False,
+            "trajectory_utility_sum_at_oracle": (
+                None
+                if train_env.objective_spec["reward"]
+                == LEGACY_REWARD_SCHEMA
+                else 60.0
+            ),
+        },
+        "dual_update_contract": {
+            "enabled": bool(getattr(reward_config, "dual_enabled", False)),
+            "boundary": "after_ppo_update_before_next_rollout",
+            "source": "training_completed_episodes_only",
+            "frozen_within_rollout": True,
+            "grouping": "speed_kmh",
+        },
         "discount_mode": train_env.objective_spec["discount_mode"],
         "stay_mode": "reject_current_completed_a3_event",
         "model": {
@@ -575,6 +601,33 @@ class TrainingProgressLogger:
                 f"ev {event['explained_variance']:+.3f}",
                 flush=True,
             )
+            dual_update = event.get("dual_update")
+            if dual_update is not None:
+                lambdas = ", ".join(
+                    f"{speed}:{value:.3f}"
+                    for speed, value in dual_update[
+                        "lambda_after_by_speed"
+                    ].items()
+                ) or "none"
+                shortfalls = ", ".join(
+                    f"{speed}:{value:+.3f}"
+                    for speed, value in dual_update[
+                        "shortfall_by_speed"
+                    ].items()
+                ) or "none"
+                counts = ", ".join(
+                    f"{speed}:{value}"
+                    for speed, value in dual_update[
+                        "sample_count_by_speed"
+                    ].items()
+                ) or "none"
+                updated = ",".join(dual_update["updated_speeds"]) or "none"
+                print(
+                    f"[dual] lambda {lambdas} | "
+                    f"shortfall {shortfalls} | n {counts} | "
+                    f"updated {updated}",
+                    flush=True,
+                )
         elif event_name == "validation_started":
             print(
                 f"[validation] evaluating "
@@ -668,6 +721,20 @@ def main(root_path: str, args: Namespace) -> int:
     )
     ppo_config.validate()
 
+    reward_config = (
+        None
+        if args.reward_schema == LEGACY_REWARD_SCHEMA
+        else trajectory_reward_config(
+            args.reward_schema,
+            dual_target_ratio=args.dual_target_ratio,
+            dual_learning_rate=args.dual_learning_rate,
+            dual_max_coefficient=args.dual_max_coefficient,
+            dual_min_episodes_per_speed=(
+                args.dual_min_episodes_per_speed
+            ),
+        )
+    )
+
     train_env = HandoverSMDPEnv(
         protocol_config,
         data_dir=data_dir,
@@ -676,6 +743,8 @@ def main(root_path: str, args: Namespace) -> int:
         candidate_count=args.candidate_count,
         candidate_order=args.candidate_order,
         observation_schema=args.observation_schema,
+        reward_schema=args.reward_schema,
+        reward_config=reward_config,
     )
     validation_env = HandoverSMDPEnv(
         protocol_config,
@@ -685,6 +754,8 @@ def main(root_path: str, args: Namespace) -> int:
         candidate_count=args.candidate_count,
         candidate_order=args.candidate_order,
         observation_schema=args.observation_schema,
+        reward_schema=args.reward_schema,
+        reward_config=reward_config,
     )
     agent = SMDPPPO(
         train_env.observation_space.shape[0],
@@ -848,11 +919,13 @@ def main(root_path: str, args: Namespace) -> int:
         progress_callback=progress_logger,
         progress_interval=args.progress_interval,
     )
+    training_reward_state = train_env.reward_state
     checkpoint_summary = checkpoint_manager.summary()
     agent.save_checkpoint(
         latest_path,
         extra={
             **audit_metadata,
+            "reward_state": training_reward_state,
             "checkpoint_selection_summary": checkpoint_summary,
         },
     )
@@ -879,6 +952,8 @@ def main(root_path: str, args: Namespace) -> int:
         device=ppo_config.device,
         load_optimizer=True,
     )
+    selected_reward_state = selection_metadata.get("reward_state")
+    validation_env.load_reward_state(selected_reward_state)
     print("Running final validation evaluation...", flush=True)
     validation_metrics = selected_agent.evaluate(validation_env)
     test_metrics = None
@@ -891,7 +966,10 @@ def main(root_path: str, args: Namespace) -> int:
             candidate_count=args.candidate_count,
             candidate_order=args.candidate_order,
             observation_schema=args.observation_schema,
+            reward_schema=args.reward_schema,
+            reward_config=reward_config,
         )
+        test_env.load_reward_state(selected_reward_state)
         print("Running held-out test evaluation...", flush=True)
         test_metrics = selected_agent.evaluate(test_env)
     else:
@@ -906,6 +984,7 @@ def main(root_path: str, args: Namespace) -> int:
             "selected_from": selected_path,
             "selection_reason": selection_reason,
             "selection_metadata": selection_metadata,
+            "reward_state": selected_reward_state,
             "checkpoint_selection_summary": checkpoint_summary,
             "experiment_status": experiment_status,
             "validation": asdict(validation_metrics),
@@ -925,6 +1004,8 @@ def main(root_path: str, args: Namespace) -> int:
         "ppo_config": asdict(ppo_config),
         "protocol_config": asdict(protocol_config),
         "objective": train_env.objective_spec,
+        "training_reward_state": training_reward_state,
+        "selected_reward_state": selected_reward_state,
         "split_seed": args.split_seed,
         "split_fractions": split_fractions,
         "split_sizes": {
