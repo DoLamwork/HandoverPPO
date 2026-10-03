@@ -66,6 +66,20 @@ def run(argv=None) -> int:
     audit_parser.add_argument(
         "--output-dir", default="results/audit/p1_candidates_s17"
     )
+    summary_parser = subparsers.add_parser(
+        "summarize_ablation",
+        help="Validate and summarize completed PPO screening arms.",
+    )
+    summary_parser.add_argument(
+        "--input-dir", default="results/models/ablation_v2"
+    )
+    summary_parser.add_argument(
+        "--experiment-ids", nargs="+", required=True
+    )
+    summary_parser.add_argument("--expected-budget", type=int, default=None)
+    summary_parser.add_argument(
+        "--output-dir", default="results/analysis/ablation_summary"
+    )
     train_parser = subparsers.add_parser(
         "train_ppo",
         help="Train duration-aware PPO on the SMDP environment.",
@@ -303,6 +317,10 @@ def run(argv=None) -> int:
         from ho_optim_drl.commands import audit_candidates
 
         return audit_candidates.main(root_path, args)
+    if args.command == "summarize_ablation":
+        from ho_optim_drl.commands import summarize_ablation
+
+        return summarize_ablation.main(root_path, args)
     if args.command == "train_ppo":
         from ho_optim_drl.commands import train_smdp_ppo
 

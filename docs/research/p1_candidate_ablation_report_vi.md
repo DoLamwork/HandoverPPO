@@ -1,14 +1,17 @@
 # Báo cáo P1 — audit và ablation số lượng candidate PPO
 
-Ngày xác nhận: 02/10/2026.
+Ngày xác nhận code/audit: 02/10/2026. Ngày hoàn tất screening: 03/10/2026.
 
-Branch triển khai: `codex/p1-candidate-ablation`.
+Branch triển khai selector: `codex/p1-candidate-ablation`.
+
+Branch đóng screening: `codex/p1-finalize-screening`.
 
 Tài liệu kế hoạch: `docs/research/ppo_ablation_training_plan_vi.md`.
 
 ## 1. Kết luận ngắn
 
-P1 đã hoàn thành phần code, audit offline và smoke end-to-end. Không gian action
+P1 đã hoàn thành code, audit offline, smoke end-to-end và bốn screening 100k
+seed17. Không gian action
 hiện hỗ trợ cùng một pool vật lý 10 cell với ba kích thước prefix:
 
 | K | Action | Observation |
@@ -23,10 +26,15 @@ vào C3. Các cell còn lại giữ thứ tự legacy. Vì vậy K=3 là prefix 
 K=5 là prefix của K=10; selector không thay pool topology ban đầu.
 
 Audit train-only cho thấy K=3 giữ được ít nhất một alternative hữu ích trong
-100% positive state quan sát được. Tuy nhiên số positive chỉ khoảng 5-7% tổng
-state, nên **chưa được kết luận K=3 là tốt nhất**. Cần chạy E00-E03 đủ 100k trên
-validation để chọn K*. Các smoke 1.024 step chỉ xác nhận mechanics, không phải
-kết quả nghiên cứu.
+100% positive state quan sát được. Screening cho thấy giảm K không làm agent
+học chọn alternative: mọi checkpoint được chọn của E00/E02/E03 đều chọn C1
+100% và tái tạo chính xác 3GPP; E01 chọn STAY 99,89% và không đạt QoS.
+
+Vì E00/E02/E03 hòa nhau về metric được chọn, K*=3 được khóa làm nền gọn cho P2
+dựa trên parsimony, observation/action nhỏ hơn và coverage audit. Đây **không
+phải** bằng chứng K=3 tốt hơn về QoS/reliability, cũng không phải bằng chứng PPO
+đã học target selection. P1 là negative result có ích: bottleneck hiện nằm ở
+tín hiệu observation/reward và ổn định policy, không nằm ở việc thiếu candidate.
 
 ## 2. Ranked selector đã khóa
 
@@ -165,11 +173,71 @@ Benchmark validation E03 đã chạy đủ 150 route và load đúng checkpoint 
 Kết quả 1.024-step PPO kém 3GPP về rate như dự kiến đối với smoke; mục đích run
 này chỉ là xác nhận loader, mapping và output benchmark.
 
-## 6. Bước tiếp theo bắt buộc: screening E00-E03 100k
+## 6. Screening E00-E03 100k đã hoàn tất
 
-Chưa khóa K*. Chạy tuần tự bốn arm từ đầu, không resume/warm-start, giữ
-`--skip-final-test`. E00 là baseline F1 K10 legacy; E01 chỉ đổi order; E02 chỉ
-đổi K 10→5; E03 chỉ đổi K 5→3.
+Bốn arm được chạy tuần tự từ đầu, không resume/warm-start và đều dùng
+`--skip-final-test`. Mỗi arm có 9 validation checkpoint trên 150 route validation.
+Test và zero-shot không được đọc để chọn K.
+
+| Arm | K/order | Trạng thái | Step chọn | RR | RLF-time | HOF | PP | Action deterministic |
+|---|---|---|---:|---:|---:|---:|---:|---|
+| E00 | 10/legacy | feasible | 92.160 | 91,272% | 1,313% | 10,903% | 37,057% | 100% C1 |
+| E01 | 10/ranked | infeasible | 10.240 | 74,004% | 1,718% | 0% | 0% | 99,89% STAY |
+| E02 | 5/ranked | feasible | 51.200 | 91,272% | 1,313% | 10,903% | 37,057% | 100% C1 |
+| E03 | 3/ranked | feasible | 92.160 | 91,272% | 1,313% | 10,903% | 37,057% | 100% C1 |
+
+E00/E02/E03 trùng 3GPP vì action C1 chính là completed-A3 target. Cùng trigger,
+cùng target và cùng protocol engine tạo serving timeline giống hệt 3GPP. Không
+có action C2+ nào được chọn trong checkpoint của cả bốn arm.
+
+### 6.1. Checkpoint-selection effect
+
+Không được diễn giải “feasible” là hội tụ ổn định:
+
+- E02 đạt 100% C1 ở step 51.200 nên checkpoint selector giữ lại; validation
+  61.440-92.160 quay về 100% STAY và infeasible.
+- E00 và E03 chỉ chuyển sang 100% C1 ở validation 92.160.
+- Mỗi arm feasible chỉ có đúng một validation checkpoint qua QoS gate.
+- Deterministic argmax làm thay đổi logit nhỏ có thể lật phần lớn state tương tự
+  từ STAY sang C1, tạo bước nhảy đột ngột.
+
+Vì vậy checkpoint được chọn trả lời “đã từng có policy qua gate hay chưa”, không
+chứng minh policy cuối ngân sách ổn định. P2 phải tiếp tục báo cả selected và
+last scheduled validation.
+
+### 6.2. Công cụ registry tái lập
+
+Lệnh kiểm tra artifact và tái tạo registry:
+
+```powershell
+.\.venv\Scripts\python.exe run.py summarize_ablation `
+  --input-dir results/models/ablation_v2 `
+  --experiment-ids E00_f1_k10_legacy_s17 E01_ranked_k10_s17 `
+                   E02_ranked_k5_s17 E03_ranked_k3_s17 `
+  --expected-budget 100000 `
+  --output-dir results/analysis/p1_screening
+```
+
+Công cụ từ chối arm sai experiment ID/budget, đã dùng test, thiếu selected/latest
+checkpoint hoặc selected metrics không khớp validation checkpoint. Nó xuất
+JSON, CSV và Markdown, đồng thời phân loại `STAY_COLLAPSE`,
+`HO_C1_COLLAPSE_3GPP_EQUIVALENT`, `MIXED_STAY_C1` hoặc
+`USES_ALTERNATIVE_CANDIDATES`.
+
+## 7. Quyết định khóa P1
+
+- Khóa `candidate_count=3`, `candidate_order=ranked_v1` cho E04-E06.
+- Giữ structural mask; không thêm Qin/A3 hard mask cho C2/C3.
+- Không promote weights E03 sang P2; mỗi arm P2 train mới từ đầu.
+- Không chạy test/zero-shot ở thời điểm này.
+- Không chạy thêm seed để “cứu” legacy observation/reward: P2 trước hết phải
+  kiểm tra giả thuyết observation.
+- Nếu P2 cho thấy K=3 thiếu coverage/khả năng học ở validation, mở lại quyết
+  định bằng control K=5; không thay K âm thầm trong cùng experiment ID.
+
+Phần lệnh lịch sử dưới đây được giữ để tái lập các run đã hoàn tất.
+
+### 7.1. Cấu hình lệnh screening đã dùng
 
 Các phần chung của mỗi lệnh:
 
@@ -218,5 +286,5 @@ Thay `<ARM_FLAGS>` lần lượt bằng:
 ```
 
 Chỉ so sánh validation: QoS gate aggregate/từng speed, relative rate và p10,
-RLF-time, HOF, PP, learning curve, action distribution và uncertainty theo
-route. Không benchmark test/zero-shot cho đến khi đã freeze candidate K*.
+RLF-time, HOF, PP, learning curve và action distribution. Không benchmark
+test/zero-shot cho đến khi observation/reward được freeze ở giai đoạn sau.

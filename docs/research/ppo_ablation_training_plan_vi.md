@@ -1,8 +1,10 @@
 # Kế hoạch kiểm thử các bản PPO tiếp theo
 
 Ngày lập: 02/10/2026.
-Trạng thái: P0 đã triển khai; P1 đã hoàn thành code, audit train-only và smoke
-E01-E03 nhưng chưa chạy screening 100k. P2-P5 vẫn là kế hoạch. Báo cáo:
+Trạng thái: P0 đã triển khai; P1 đã hoàn thành code, audit train-only và
+screening E00-E03 ở 100k seed17. K*=3 được khóa làm nền gọn cho P2, nhưng P1
+không tạo cải thiện vận hành: checkpoint feasible của E00/E02/E03 đều collapse
+về 100% HO_C1 và tái tạo đúng 3GPP. P2-P5 vẫn là kế hoạch. Báo cáo:
 `docs/research/p0_experiment_baseline_report_vi.md` và
 `docs/research/p1_candidate_ablation_report_vi.md`.
 Tài liệu thiết kế: docs/research/ppo_qos_observation_reward_design_vi.md.
@@ -107,12 +109,14 @@ Chạy smoke 2.048 macro-step để xác nhận mechanics; F0/F1 matched 100k se
 
 ## 4. P1 — chọn số lượng và cách tạo candidate
 
-Trạng thái triển khai ngày 02/10/2026: selector ranked_v1, K=3/5/10, audit
-counterfactual và checkpoint/benchmark schema động đã hoạt động. Audit 80 route
-train, 589 state cho coverage K=3 bằng 100% trên 38-39 positive state so với C1
-và 30-34 positive state so với best(STAY,C1). Đây mới là bằng chứng shortlist;
-E00-E03 100k vẫn phải chạy trước khi khóa K*. Xem báo cáo P1 để biết caveat và
-lệnh chạy.
+Trạng thái hoàn tất ngày 03/10/2026: selector ranked_v1, K=3/5/10, audit
+counterfactual, checkpoint/benchmark schema động và registry screening đã hoạt
+động. Audit 80 route train, 589 state cho coverage K=3 bằng 100% trên 38-39
+positive state so với C1 và 30-34 positive state so với best(STAY,C1).
+E00-E03 đã chạy đủ 100k seed17, không dùng test. E00/E02/E03 chỉ đạt QoS bằng
+cách chọn HO_C1 100%; E01 collapse về STAY và infeasible. K*=3 được chọn theo
+parsimony và coverage để tiếp tục P2, không phải vì đã chứng minh tốt hơn K=5/10.
+Xem báo cáo P1 để biết checkpoint-selection effect và caveat một seed.
 
 ### 4.1. Audit offline trước
 
@@ -349,9 +353,10 @@ Run lịch sử 300k mất 12.570,9 giây ~3,49 giờ, gồm validation. Suy tuy
 
 1. P0: experiment config + log + skip-test + checkpoint contract + SMDP consistency.
 2. Mở rộng train-only candidate audit và freeze ranked selector.
-3. Train E00, E01, E02, E03 ở 100k seed17.
-4. Chốt K* trên validation/coverage.
-5. Train E04-E06, giữ reward cũ.
+3. ~~Train E00, E01, E02, E03 ở 100k seed17.~~ Hoàn tất 03/10/2026.
+4. ~~Chốt K* trên validation/coverage.~~ K*=3 làm nền P2; chưa phải kết luận
+   hiệu năng cuối.
+5. Train E04-E06 với K=3/ranked_v1, giữ reward cũ.
 6. Train E07-E10, giữ K*/observation/mạng.
 7. Bổ sung E11 để hoàn thành interaction 2x2.
 8. Xác nhận tối đa ba cấu hình với ba seed/300k.
