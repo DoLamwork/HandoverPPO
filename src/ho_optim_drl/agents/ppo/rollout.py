@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from typing import Any
 
 import numpy as np
 import torch
@@ -53,6 +54,8 @@ class SMDPRolloutBuffer:
         self.truncated = np.empty(capacity, dtype=np.bool_)
         self.trace_ids = np.empty(capacity, dtype=object)
         self.trace_ids.fill(None)
+        self.transition_metadata = np.empty(capacity, dtype=object)
+        self.transition_metadata.fill(None)
         self.advantages = np.empty(capacity, dtype=np.float32)
         self.returns = np.empty(capacity, dtype=np.float32)
         self.size = 0
@@ -82,6 +85,7 @@ class SMDPRolloutBuffer:
         truncated: bool,
         trace_id: str | None = None,
         action_mask: np.ndarray | None = None,
+        transition_metadata: dict[str, Any] | None = None,
     ) -> None:
         """Store one macro-transition."""
         if self.full:
@@ -136,6 +140,7 @@ class SMDPRolloutBuffer:
         self.terminated[index] = terminated
         self.truncated[index] = truncated
         self.trace_ids[index] = trace_id
+        self.transition_metadata[index] = transition_metadata
         self.size += 1
         self._advantages_ready = False
 

@@ -2,9 +2,11 @@
 
 Ngày triển khai: 03/10/2026.
 
-Trạng thái: code, unit test, smoke train và checkpoint reload đã hoàn tất.
-Screening 100k E07-E10 chưa chạy; các số smoke trong tài liệu này không phải
-kết quả nghiên cứu.
+Trạng thái cập nhật 05/10/2026: code, unit test, smoke và screening 100k
+E07–E10 đã hoàn tất. E07 selected tạo trade-off tạm thời; E08–E10 selected
+trùng hành vi 3GPP và các latest checkpoint quay về C1. Xem
+[báo cáo D0–D2](p23_diagnostic_report_vi.md) để phân biệt selected/latest và
+nguyên nhân quá trình học. Các số smoke bên dưới vẫn chỉ là kiểm thử cơ chế.
 
 ## 1. Phạm vi được khóa
 
@@ -132,7 +134,7 @@ Artifacts smoke cục bộ:
 results/models/p3_smoke/E10_dual_smoke_s17/
 ```
 
-## 7. Lệnh screening 100k
+## 7. Lệnh tái lập screening 100k đã hoàn tất
 
 Cấu hình chung cho cả bốn arm:
 
@@ -187,11 +189,11 @@ Arm flags:
 --output-dir results/models/ablation_v2/E10_qos_dual_k3_s17
 ```
 
-Chạy tuần tự E07→E08→E09→E10. Screening chỉ dùng validation và
-`skip-final-test`. Sau khi có kết quả, so sánh selected checkpoint và last
-scheduled validation, reward component totals, action distribution, lambda
-trajectory theo speed và QoS aggregate/per-speed. Không promote E10 chỉ vì
-lambda làm return lớn hơn; tiêu chí vẫn là relative rate, RLF-time, HOF và PP.
+Các run đã được chạy tuần tự E07→E08→E09→E10, chỉ dùng validation và
+`skip-final-test`. Kết quả selected checkpoint, last scheduled validation,
+reward component, action distribution, lambda theo speed và QoS aggregate/
+per-speed hiện được giữ nguyên làm artifact lịch sử. E10 không được promote chỉ
+vì lambda làm return lớn hơn; tiêu chí vẫn là relative rate, RLF-time, HOF và PP.
 
 ## 8. Điều chưa được P3 giải quyết
 

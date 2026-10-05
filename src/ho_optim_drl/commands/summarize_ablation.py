@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import math
 import os
+import pickle
 from pathlib import Path
 from typing import Any, Iterable
+
+import torch
 
 
 _MATCH_FIELDS = (
@@ -41,6 +45,17 @@ def _as_float(value: Any, default: float = 0.0) -> float:
     return float(value)
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if value in (None, ""):
+        return {}
+    parsed = json.loads(value)
+    if not isinstance(parsed, dict):
+        raise ValueError("Expected a serialized JSON object.")
+    return parsed
+
+
 def _load_validation_rows(path: Path) -> list[dict[str, Any]]:
     with path.open("r", encoding="utf-8", newline="") as source:
         rows = list(csv.DictReader(source))
@@ -64,18 +79,117 @@ def _same_metrics(row: dict[str, Any], selected: dict[str, Any]) -> bool:
     )
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _existing_checkpoint_path(root: Path, value: Any) -> Path | None:
+    if not value:
+        return None
+    path = Path(str(value))
+    candidates = [path]
+    if not path.is_absolute():
+        candidates.append(root / path)
+    candidates.append(root / path.name)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _checkpoint_step(root: Path, report: dict[str, Any]) -> tuple[int | None, str]:
+    """Resolve the selected step from immutable checkpoint evidence."""
+    checkpoints = dict(report.get("checkpoints") or {})
+    selected = _existing_checkpoint_path(root, checkpoints.get("selected_from"))
+    if selected is None:
+        selected = _existing_checkpoint_path(root, checkpoints.get("selected_export"))
+    if selected is None:
+        return None, "unavailable"
+
+    if selected.name.startswith("step_"):
+        try:
+            return int(selected.stem.removeprefix("step_")), "checkpoint_filename"
+        except ValueError:
+            pass
+    try:
+        selected_hash = _sha256_file(selected)
+        for candidate in sorted((root / "checkpoints" / "all").glob("step_*.pt")):
+            if _sha256_file(candidate) == selected_hash:
+                return (
+                    int(candidate.stem.removeprefix("step_")),
+                    "checkpoint_sha256",
+                )
+    except OSError:
+        pass
+    try:
+        payload = torch.load(selected, map_location="cpu", weights_only=True)
+        step = payload.get("total_macro_steps")
+        if step is not None:
+            return int(step), "checkpoint_counter"
+    except (
+        OSError,
+        RuntimeError,
+        ValueError,
+        TypeError,
+        EOFError,
+        AttributeError,
+        pickle.UnpicklingError,
+    ):
+        pass
+    return None, "unavailable"
+
+
 def _selected_validation_row(
-    rows: list[dict[str, Any]], selected: dict[str, Any]
-) -> dict[str, Any]:
+    rows: list[dict[str, Any]],
+    selected: dict[str, Any],
+    *,
+    selected_step: int | None = None,
+) -> tuple[dict[str, Any], str]:
+    if selected_step is not None:
+        step_matches = [
+            row for row in rows if int(row["macro_steps"]) == selected_step
+        ]
+        if len(step_matches) == 1:
+            if not _same_metrics(step_matches[0], selected):
+                raise ValueError(
+                    "Selected checkpoint step exists, but its validation "
+                    "metrics disagree with the final selected evaluation."
+                )
+            return step_matches[0], "explicit_step"
     matches = [row for row in rows if _same_metrics(row, selected)]
     if not matches:
         raise ValueError(
             "The selected validation metrics do not match any scheduled "
             "validation checkpoint."
         )
-    # Several deterministic checkpoints can have identical metrics. The first
-    # match is the checkpoint that could first have established the saved best.
-    return matches[0]
+    if len(matches) == 1:
+        return matches[0], "unique_metric_match"
+    # Historical reports did not record the selected counter explicitly.
+    # Keep them readable, but label this ambiguity instead of presenting the
+    # first identical row as ground truth.
+    return matches[0], "inferred_first_identical_metric_match"
+
+
+def _last_training_step(root: Path, report: dict[str, Any]) -> int | None:
+    metrics_path = root / "training_metrics.jsonl"
+    last = None
+    if metrics_path.is_file():
+        with metrics_path.open("r", encoding="utf-8") as source:
+            for line in source:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if event.get("event") == "update_complete":
+                    last = int(event["macro_steps"])
+    if last is not None:
+        return last
+    history = report.get("history") or []
+    return int(history[-1]["macro_steps"]) if history else None
 
 
 def _policy_mode(action_fractions: dict[str, Any]) -> str:
@@ -93,6 +207,44 @@ def _policy_mode(action_fractions: dict[str, Any]) -> str:
     if alternative >= 0.01:
         return "USES_ALTERNATIVE_CANDIDATES"
     return "MIXED_STAY_C1"
+
+
+def _validation_snapshot(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return {
+        "macro_steps": int(row["macro_steps"]),
+        "update": int(row.get("update") or 0),
+        "episodes": int(row.get("episodes") or 0),
+        "skipped_no_decision": int(row.get("skipped_no_decision") or 0),
+        "qos_feasible": _as_bool(row.get("qos_feasible")),
+        "mean_return": _as_float(row.get("mean_return")),
+        "mean_estimated_rate_mbps": _as_float(
+            row.get("mean_estimated_rate_mbps")
+        ),
+        "mean_relative_rate_percent": _as_float(
+            row.get("mean_relative_rate_percent")
+        ),
+        "p10_relative_rate_percent": _as_float(
+            row.get("p10_relative_rate_percent")
+        ),
+        "mean_relative_rate_percent_by_speed": _as_dict(
+            row.get("mean_relative_rate_percent_by_speed")
+        ),
+        "p10_relative_rate_percent_by_speed": _as_dict(
+            row.get("p10_relative_rate_percent_by_speed")
+        ),
+        "rlf_time_percent": _as_float(row.get("rlf_time_percent")),
+        "handover_failure_percent": _as_float(
+            row.get("handover_failure_percent")
+        ),
+        "ping_pong_percent": _as_float(row.get("ping_pong_percent")),
+        "total_handover_attempts": int(row.get("total_handover_attempts") or 0),
+        "total_rlf": int(row.get("total_rlf") or 0),
+        "total_ping_pong": int(row.get("total_ping_pong") or 0),
+        "action_counts": _as_dict(row.get("action_counts")),
+        "action_fractions": _as_dict(row.get("action_fractions")),
+    }
 
 
 def summarize_arm(
@@ -137,8 +289,25 @@ def summarize_arm(
 
     rows = _load_validation_rows(metrics_path)
     selected_metrics = dict(report.get("validation") or {})
-    selected_row = _selected_validation_row(rows, selected_metrics)
+    checkpoint_step, checkpoint_step_source = _checkpoint_step(root, report)
+    selected_row, selected_row_resolution = _selected_validation_row(
+        rows,
+        selected_metrics,
+        selected_step=checkpoint_step,
+    )
     last_row = rows[-1]
+    budget_end_row = (
+        last_row if int(last_row["macro_steps"]) == budget else None
+    )
+    interval = int(
+        config.get("budget", {}).get("validation_interval_macro_steps", 0)
+    )
+    scheduled_rows = [
+        row
+        for row in rows
+        if interval <= 0 or int(row["macro_steps"]) % interval == 0
+    ]
+    last_scheduled_row = scheduled_rows[-1] if scheduled_rows else last_row
     action_fractions = dict(selected_metrics.get("action_fractions") or {})
     alternative_fraction = sum(
         _as_float(value)
@@ -169,7 +338,24 @@ def summarize_arm(
             checkpoint_selection.get("qos_feasible_checkpoints", 0)
         ),
         "selected_step": int(selected_row["macro_steps"]),
-        "last_scheduled_validation_step": int(last_row["macro_steps"]),
+        "selected_step_source": (
+            checkpoint_step_source
+            if checkpoint_step is not None
+            else selected_row_resolution
+        ),
+        "selected_step_inferred": checkpoint_step is None,
+        "last_scheduled_validation_step": int(
+            last_scheduled_row["macro_steps"]
+        ),
+        "budget_end_validation_step": (
+            int(budget_end_row["macro_steps"])
+            if budget_end_row is not None
+            else None
+        ),
+        "training_last_macro_steps": _last_training_step(root, report),
+        "selected_validation": _validation_snapshot(selected_row),
+        "last_scheduled_validation": _validation_snapshot(last_scheduled_row),
+        "budget_end_validation": _validation_snapshot(budget_end_row),
         "selected_qos_feasible": _as_bool(selected_row.get("qos_feasible")),
         "selected_rate_mbps": _as_float(
             selected_metrics.get("mean_estimated_rate_mbps")
@@ -219,6 +405,32 @@ def summarize_arm(
             last_row["action_fractions"].get("HO_C1")
         ),
         "last_validation_policy_mode": _policy_mode(last_row["action_fractions"]),
+        "dataset_manifest_sha256": (
+            report.get("dataset_manifest", {}).get("sha256")
+            or report.get("dataset_manifest", {}).get("manifest_sha256")
+        ),
+        "dataset_content_sha256": (
+            report.get("dataset_manifest", {}).get("dataset_content_sha256")
+            or report.get("experiment_config", {})
+            .get("config", {})
+            .get("dataset", {})
+            .get("content_sha256")
+        ),
+        "source_manifest_sha256": (
+            report.get("source_state", {}).get("source_manifest_sha256")
+        ),
+        "validation_reference": {
+            "label": "3gpp_always_ho",
+            "mean_estimated_rate_mbps": report.get(
+                "validation_3gpp_reference", {}
+            ).get("mean_estimated_rate_mbps"),
+            "mean_relative_rate_percent": report.get(
+                "validation_3gpp_reference", {}
+            ).get("mean_relative_rate_percent"),
+            "episodes": report.get("validation_3gpp_reference", {}).get(
+                "episodes"
+            ),
+        },
     }
 
 

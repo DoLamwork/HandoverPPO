@@ -10,6 +10,10 @@ class SMDPPPOConfig:
 
     hidden_sizes: tuple[int, ...] = (64, 64)
     activation: str = "tanh"
+    network_architecture: str = "shared_mlp_v1"
+    candidate_feature_size: int = 15
+    value_normalization: str = "none"
+    value_target_scale: float = 1.0
     learning_rate: float = 3e-4
     rollout_steps: int = 512
     batch_size: int = 64
@@ -22,6 +26,7 @@ class SMDPPPOConfig:
     lambda_per_second: float = 0.95
     normalize_advantage: bool = True
     target_kl: float | None = 0.03
+    learning_diagnostics: bool = False
     seed: int = 17
     device: str = "cpu"
 
@@ -30,6 +35,23 @@ class SMDPPPOConfig:
             raise ValueError("hidden_sizes must contain positive layer sizes.")
         if self.activation not in {"tanh", "relu"}:
             raise ValueError("activation must be 'tanh' or 'relu'.")
+        if self.network_architecture not in {
+            "shared_mlp_v1",
+            "separate_mlp_v1",
+            "candidate_scorer_v1",
+        }:
+            raise ValueError("Unsupported network_architecture.")
+        if self.candidate_feature_size <= 0:
+            raise ValueError("candidate_feature_size must be positive.")
+        if self.value_normalization not in {"none", "fixed_scale_v1"}:
+            raise ValueError("Unsupported value_normalization.")
+        if (
+            not math.isfinite(self.value_target_scale)
+            or self.value_target_scale < 1.0
+        ):
+            raise ValueError("value_target_scale must be finite and >= 1.")
+        if self.value_normalization == "none" and self.value_target_scale != 1.0:
+            raise ValueError("value_normalization='none' requires scale 1.")
 
         positive = {
             "learning_rate": self.learning_rate,
@@ -59,3 +81,5 @@ class SMDPPPOConfig:
             raise ValueError("target_kl must be finite and positive or None.")
         if self.seed < 0:
             raise ValueError("seed must be non-negative.")
+        if not isinstance(self.learning_diagnostics, bool):
+            raise ValueError("learning_diagnostics must be boolean.")

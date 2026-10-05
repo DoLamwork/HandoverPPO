@@ -7,12 +7,14 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from dataclasses import replace
 
 import numpy as np
 import torch
 
 from ho_optim_drl import Config, HandoverSMDPEnv
 from ho_optim_drl.agents.ppo import (
+    ActorCritic,
     EvaluationMetrics,
     SMDPPPO,
     SMDPPPOConfig,
@@ -25,6 +27,8 @@ from scripts.train_smdp_ppo import (
     TrainingProgressLogger,
     aggregate_training_trace_usage,
     build_dataset_manifest,
+    fit_fixed_value_target_scale,
+    select_value_scale_calibration_pairs,
     write_dataset_manifest,
 )
 
@@ -249,6 +253,7 @@ class PPOIntegrationTests(unittest.TestCase):
         metrics = agent.update(buffer)
 
         self.assertEqual(buffer.size, 4)
+        self.assertIsNone(metrics.learning_diagnostics)
         self.assertGreaterEqual(len(episodes), 1)
         for discount, duration in zip(
             buffer.discounts,
@@ -330,6 +335,130 @@ class PPOIntegrationTests(unittest.TestCase):
         self.assertEqual(action_before, action_after)
         self.assertEqual(restored.total_macro_steps, 7)
         self.assertEqual(extra, {"tag": "test"})
+
+    def test_checkpoint_without_new_diagnostics_flag_remains_loadable(self) -> None:
+        agent = SMDPPPO(self.observation_size, len(HandoverAction), self.config)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "legacy_config.pt")
+            agent.save_checkpoint(path)
+            checkpoint = torch.load(path, weights_only=True)
+            checkpoint["config"].pop("learning_diagnostics", None)
+            checkpoint["config"].pop("network_architecture", None)
+            checkpoint["config"].pop("candidate_feature_size", None)
+            checkpoint["config"].pop("value_normalization", None)
+            checkpoint["config"].pop("value_target_scale", None)
+            checkpoint["model_spec"].pop("network_architecture", None)
+            checkpoint["model_spec"].pop("candidate_feature_size", None)
+            checkpoint["model_spec"].pop("value_normalization", None)
+            checkpoint["model_spec"].pop("value_target_scale", None)
+            torch.save(checkpoint, path)
+
+            restored, _ = SMDPPPO.from_checkpoint(path)
+
+        self.assertFalse(restored.config.learning_diagnostics)
+        self.assertEqual(restored.config.network_architecture, "shared_mlp_v1")
+        self.assertEqual(restored.config.value_normalization, "none")
+        self.assertEqual(restored.config.value_target_scale, 1.0)
+
+    def test_separate_encoder_gradients_do_not_cross_heads(self) -> None:
+        model = ActorCritic(
+            self.observation_size,
+            len(HandoverAction),
+            hidden_sizes=(16,),
+            architecture="separate_mlp_v1",
+        )
+        observations = torch.randn(5, self.observation_size)
+        logits, values = model(observations)
+
+        actor_gradients = torch.autograd.grad(
+            logits.square().sum(),
+            tuple(model.critic_encoder.parameters()),
+            allow_unused=True,
+        )
+        critic_gradients = torch.autograd.grad(
+            values.square().sum(),
+            tuple(model.actor_encoder.parameters()),
+            allow_unused=True,
+        )
+
+        self.assertTrue(all(value is None for value in actor_gradients))
+        self.assertTrue(all(value is None for value in critic_gradients))
+
+    def test_separate_checkpoint_round_trip_auto_reconstructs_model(self) -> None:
+        config = replace(
+            self.config,
+            network_architecture="separate_mlp_v1",
+        )
+        agent = SMDPPPO(self.observation_size, len(HandoverAction), config)
+        observation, _ = self.env.reset(options={"trace_index": 0})
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "separate.pt")
+            agent.save_checkpoint(path)
+            restored, _ = SMDPPPO.from_checkpoint(path)
+
+        self.assertEqual(restored.model.architecture, "separate_mlp_v1")
+        before = agent.model.act_with_probabilities(
+            observation, device=agent.device, deterministic=True
+        )
+        after = restored.model.act_with_probabilities(
+            observation, device=restored.device, deterministic=True
+        )
+        self.assertEqual(before[:3], after[:3])
+        np.testing.assert_array_equal(before[3], after[3])
+
+    def test_fixed_value_scale_keeps_public_values_raw_and_scales_loss(self) -> None:
+        scale = 5.0
+        config = replace(
+            self.config,
+            value_normalization="fixed_scale_v1",
+            value_target_scale=scale,
+            update_epochs=1,
+        )
+        agent = SMDPPPO(self.observation_size, len(HandoverAction), config)
+        with torch.no_grad():
+            agent.model.value_head.weight.zero_()
+            agent.model.value_head.bias.fill_(2.0)
+        observation, _ = self.env.reset(options={"trace_index": 0})
+        self.assertAlmostEqual(
+            agent.model.predict_value(observation, device=agent.device),
+            10.0,
+        )
+        buffer, _ = agent.collect_rollout(self.env, reset_seed=11)
+        metrics = agent.update(buffer)
+        self.assertAlmostEqual(
+            metrics.raw_value_mse,
+            2.0 * metrics.value_loss * scale * scale,
+            places=4,
+        )
+
+    def test_value_scale_calibration_uses_train_returns_and_is_deterministic(self) -> None:
+        traces = [_trace("cal-a", 2.0), _trace("cal-b", 4.0)]
+        records = [{"trace_id": trace.trace_id} for trace in traces]
+        first = fit_fixed_value_target_scale(
+            HandoverSMDPEnv(Config(), traces=traces),
+            trace_records=records,
+        )
+        second = fit_fixed_value_target_scale(
+            HandoverSMDPEnv(Config(), traces=traces),
+            trace_records=records,
+        )
+        self.assertGreaterEqual(first["value_target_scale"], 1.0)
+        self.assertEqual(first, second)
+        self.assertEqual(first["split"], "train")
+
+    def test_value_scale_calibration_subset_is_speed_stratified(self) -> None:
+        pairs = tuple(
+            TracePair(speed, route, f"r{speed}-{route}", f"s{speed}-{route}")
+            for speed in (50, 30)
+            for route in ("b", "a", "c")
+        )
+        selected = select_value_scale_calibration_pairs(
+            pairs, routes_per_speed=2
+        )
+        self.assertEqual(
+            [(pair.speed_kmh, pair.trajectory_id) for pair in selected],
+            [(30, "a"), (30, "b"), (50, "a"), (50, "b")],
+        )
 
     def test_numpy_model_dimensions_are_saved_safely_and_legacy_loads(self) -> None:
         agent = SMDPPPO(
@@ -444,6 +573,186 @@ class PPOIntegrationTests(unittest.TestCase):
         self.assertIn("validation_started", event_names)
         self.assertIn("validation_complete", event_names)
         self.assertEqual(event_names[-1], "training_complete")
+
+    def test_budget_end_validation_is_added_when_interval_does_not_divide(self) -> None:
+        validation_env = HandoverSMDPEnv(
+            Config(), traces=[_trace("validation", 3.0)], gamma_per_second=0.99
+        )
+        agent = SMDPPPO(self.observation_size, len(HandoverAction), self.config)
+        events: list[dict] = []
+
+        agent.train(
+            self.env,
+            total_macro_steps=5,
+            validation_env=validation_env,
+            evaluation_interval=4,
+            progress_callback=events.append,
+        )
+
+        completed = [
+            event for event in events if event["event"] == "validation_complete"
+        ]
+        self.assertEqual([event["macro_steps"] for event in completed], [4, 5])
+        self.assertEqual(completed[-1]["validation_trigger"], "budget_end")
+
+    def test_budget_end_validation_is_not_duplicated_on_interval(self) -> None:
+        validation_env = HandoverSMDPEnv(
+            Config(), traces=[_trace("validation", 3.0)], gamma_per_second=0.99
+        )
+        agent = SMDPPPO(self.observation_size, len(HandoverAction), self.config)
+        events: list[dict] = []
+
+        agent.train(
+            self.env,
+            total_macro_steps=4,
+            validation_env=validation_env,
+            evaluation_interval=4,
+            progress_callback=events.append,
+        )
+
+        completed = [
+            event for event in events if event["event"] == "validation_complete"
+        ]
+        self.assertEqual([event["macro_steps"] for event in completed], [4])
+        self.assertEqual(completed[0]["validation_trigger"], "scheduled")
+
+    def test_opt_in_learning_diagnostics_separate_actor_and_critic(self) -> None:
+        config = SMDPPPOConfig(
+            hidden_sizes=(16,),
+            learning_rate=1e-3,
+            rollout_steps=4,
+            batch_size=2,
+            update_epochs=1,
+            target_kl=None,
+            learning_diagnostics=True,
+            seed=3,
+        )
+        agent = SMDPPPO(self.observation_size, len(HandoverAction), config)
+        buffer, _ = agent.collect_rollout(self.env, reset_seed=11)
+
+        metrics = agent.update(buffer)
+
+        diagnostics = metrics.learning_diagnostics
+        self.assertIsNotNone(diagnostics)
+        self.assertEqual(
+            set(diagnostics["terms"]), {"actor", "critic", "entropy"}
+        )
+        self.assertIn("encoder", diagnostics["terms"]["actor"]["group_norms"])
+        self.assertIn("explained_variance_pre", diagnostics)
+        self.assertIn("explained_variance_post", diagnostics)
+        self.assertEqual(diagnostics["action_update"]["rollout_size"], 4)
+        self.assertIn("STAY", diagnostics["action_update"]["actions"])
+        self.assertIn("HO_C1", diagnostics["action_update"]["actions"])
+        self.assertEqual(
+            sum(
+                action["chosen_count"]
+                for action in diagnostics["action_update"]["actions"].values()
+            ),
+            4,
+        )
+
+    def test_transition_diagnostic_callback_is_aligned_with_buffer(self) -> None:
+        agent = SMDPPPO(
+            self.observation_size,
+            len(HandoverAction),
+            replace(self.config, rollout_steps=4),
+        )
+
+        def capture(env, observation, mask, action, probabilities):
+            return {
+                "tic": env.engine.snapshot.tic,
+                "action": action,
+                "probability_sum": float(probabilities.sum()),
+            }
+
+        buffer, _ = agent.collect_rollout(
+            self.env,
+            reset_seed=11,
+            transition_diagnostic_callback=capture,
+        )
+        self.assertEqual(len(buffer.transition_metadata[: buffer.size]), 4)
+        for index, metadata in enumerate(buffer.transition_metadata[: buffer.size]):
+            self.assertEqual(metadata["action"], int(buffer.actions[index]))
+            self.assertAlmostEqual(metadata["probability_sum"], 1.0)
+
+    def test_candidate_scorer_candidate_logits_are_permutation_equivariant(self) -> None:
+        model = ActorCritic(
+            62,
+            4,
+            hidden_sizes=(16,),
+            architecture="candidate_scorer_v1",
+            candidate_feature_size=15,
+        )
+        with torch.no_grad():
+            model.candidate_head.weight.normal_()
+        observation = torch.randn(5, 62)
+        permutation = torch.tensor([2, 0, 1])
+        permuted = torch.cat(
+            (
+                observation[:, :17],
+                observation[:, 17:].reshape(5, 3, 15)[:, permutation].reshape(5, 45),
+            ),
+            dim=1,
+        )
+        logits, _ = model(observation)
+        permuted_logits, _ = model(permuted)
+        torch.testing.assert_close(permuted_logits[:, 0], logits[:, 0])
+        torch.testing.assert_close(permuted_logits[:, 1:], logits[:, 1:][:, permutation])
+
+    def test_candidate_scorer_checkpoint_round_trip(self) -> None:
+        config = replace(
+            self.config,
+            network_architecture="candidate_scorer_v1",
+            candidate_feature_size=15,
+        )
+        agent = SMDPPPO(62, 4, config)
+        observation = np.zeros(62, dtype=np.float32)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "candidate_scorer.pt")
+            agent.save_checkpoint(path)
+            restored, _ = SMDPPPO.from_checkpoint(path)
+        self.assertEqual(restored.model.architecture, "candidate_scorer_v1")
+        self.assertEqual(restored.model.candidate_feature_size, 15)
+        self.assertEqual(
+            agent.predict(observation), restored.predict(observation)
+        )
+
+    def test_learning_diagnostics_do_not_change_the_ppo_update(self) -> None:
+        collector = SMDPPPO(
+            self.observation_size, len(HandoverAction), self.config
+        )
+        buffer, _ = collector.collect_rollout(self.env, reset_seed=11)
+        plain = SMDPPPO(
+            self.observation_size, len(HandoverAction), self.config
+        )
+        instrumented = SMDPPPO(
+            self.observation_size,
+            len(HandoverAction),
+            replace(self.config, learning_diagnostics=True),
+        )
+        instrumented.model.load_state_dict(plain.model.state_dict())
+        instrumented.optimizer.load_state_dict(plain.optimizer.state_dict())
+
+        torch.manual_seed(991)
+        plain_metrics = plain.update(buffer)
+        torch.manual_seed(991)
+        instrumented_metrics = instrumented.update(buffer)
+
+        for (plain_name, plain_parameter), (
+            instrumented_name,
+            instrumented_parameter,
+        ) in zip(
+            plain.model.named_parameters(),
+            instrumented.model.named_parameters(),
+        ):
+            self.assertEqual(plain_name, instrumented_name)
+            torch.testing.assert_close(plain_parameter, instrumented_parameter)
+        self.assertAlmostEqual(
+            plain_metrics.policy_loss, instrumented_metrics.policy_loss
+        )
+        self.assertAlmostEqual(
+            plain_metrics.value_loss, instrumented_metrics.value_loss
+        )
 
     def test_checkpoint_manager_saves_all_and_tracks_pareto_qos(self) -> None:
         agent = SMDPPPO(19, len(HandoverAction), self.config)

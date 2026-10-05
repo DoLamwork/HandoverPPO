@@ -1,10 +1,14 @@
 # Kế hoạch kiểm thử các bản PPO tiếp theo
 
 Ngày lập: 02/10/2026.
-Trạng thái: P0-P2 đã hoàn tất, gồm screening 100k E04-E06. P3 đã hoàn thành
-code/audit/unit test/smoke E07-E10; screening 100k chưa chạy. K*=3,
-`ranked_v1` và observation `qos_full_v1` được khóa làm nền P3. P4-P5 vẫn là
-kế hoạch. Báo cáo:
+Trạng thái cập nhật 04/10/2026: P0-P3 đã hoàn tất, gồm screening 100k E04-E10.
+E07 selected có trade-off QoS/reliability đáng kiểm tra, nhưng chưa ổn định qua
+training; E08-E10 selected tái tạo 3GPP. K*=3, `ranked_v1` và observation
+`qos_full_v1` là nền P3 đã chạy. Chưa chạy hàng loạt P4-P5; bước tiếp theo là
+[kế hoạch diagnostic sau P2-P3](p2_p3_diagnostic_implementation_plan_vi.md),
+ưu tiên D0-D2 trước khi mở đối chứng optimizer/reward mới. Các phần P4-P5 và
+E11 bên dưới là kế hoạch lịch sử, không phải danh sách job cần tự chạy ngay.
+Báo cáo:
 `docs/research/p0_experiment_baseline_report_vi.md` và
 `docs/research/p1_candidate_ablation_report_vi.md` và
 `docs/research/p2_observation_ablation_report_vi.md` và
@@ -366,11 +370,17 @@ Run lịch sử 300k mất 12.570,9 giây ~3,49 giờ, gồm validation. Suy tuy
 4. ~~Chốt K* trên validation/coverage.~~ K*=3 làm nền P2; chưa phải kết luận
    hiệu năng cuối.
 5. ~~Triển khai/audit/smoke và screening 100k E04-E06.~~ Hoàn tất.
-6. Triển khai/audit/unit test/smoke E07-E10: hoàn tất. Tiếp theo train
-   screening 100k E07→E08→E09→E10, giữ K*/observation/mạng.
-7. Bổ sung E11 để hoàn thành interaction 2x2.
-8. Xác nhận tối đa ba cấu hình với ba seed/300k.
-9. Chỉ chạy P5 nếu còn một vấn đề cụ thể cần giải thích.
+6. ~~Triển khai/audit/unit test/smoke và screening 100k E07-E10.~~ Hoàn tất.
+7. ~~Triển khai D0-D2 trong kế hoạch diagnostic sau P2-P3: chuẩn hóa reporting,
+   state bank TRAIN, saturation/gradient và counterfactual reward alignment.~~
+   Hoàn tất 05/10/2026; xem
+   [báo cáo D0-D2](p23_diagnostic_report_vi.md).
+8. Chọn đối chứng D3-D6 dựa evidence: gate hiện mở D3-A/D3-B, chưa mở đồng
+   thời D4-D6; rồi mới xác nhận nhiều seed/300k.
+   Interaction 2x2 vẫn cần cho claim riêng observation/reward; không tự thay
+   reward E09 trong định nghĩa E11 cũ mà giữ nguyên ID.
+9. Chỉ chạy các nhánh P5 có nguyên nhân diagnostic cụ thể hỗ trợ.
 10. Freeze, final test/zero-shot và viết kết luận.
 
-Điểm quyết định đầu tiên là dữ liệu từ bốn candidate arm, không phải chuyển ngay sang bản đầy đủ đổi tất cả thành phần.
+Điểm quyết định hiện tại là diagnostic khả năng học theo state và alignment
+giữa reward/QoS; giữ các run E00-E10 làm bằng chứng lịch sử không ghi đè.

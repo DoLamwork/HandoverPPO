@@ -2,6 +2,10 @@
 
 Ngày triển khai: 03/10/2026.
 
+Trạng thái cập nhật 05/10/2026: screening 100k E04–E06 đã hoàn tất; kết quả
+selected/latest và saturation trên cùng TRAIN state được tổng hợp trong
+[báo cáo D0–D2](p23_diagnostic_report_vi.md).
+
 Branch: `codex/p2-observation-ablation`.
 
 Parent: P1 đã khóa `candidate_count=3`, `candidate_order=ranked_v1`, structural
@@ -124,7 +128,7 @@ load và metadata. Một update với deterministic argmax không cho biết h�
 
 Toàn bộ test sau P2: 155 test, tất cả pass.
 
-## 7. Lệnh screening 100k tiếp theo
+## 7. Lệnh tái lập screening 100k đã hoàn tất
 
 Cấu hình chung:
 

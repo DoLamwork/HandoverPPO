@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import torch
+
 from ho_optim_drl.commands.summarize_ablation import summarize_arm, summarize_arms
 
 
@@ -123,6 +125,9 @@ class AblationSummaryTests(unittest.TestCase):
             record = summarize_arm(arm, expected_budget=100000)
         self.assertEqual(record["selected_step"], 51200)
         self.assertEqual(record["last_scheduled_validation_step"], 92160)
+        self.assertIsNone(record["budget_end_validation_step"])
+        self.assertTrue(record["selected_step_inferred"])
+        self.assertEqual(record["selected_step_source"], "unique_metric_match")
         self.assertEqual(
             record["selected_policy_mode"],
             "HO_C1_COLLAPSE_3GPP_EQUIVALENT",
@@ -135,6 +140,35 @@ class AblationSummaryTests(unittest.TestCase):
             arm = self._write_arm(Path(directory), test_evaluated=True)
             with self.assertRaisesRegex(ValueError, "test split"):
                 summarize_arm(arm)
+
+    def test_summary_prefers_checkpoint_step_over_identical_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            arm = self._write_arm(Path(directory))
+            report_path = arm / "training_report.json"
+            report = json.loads(report_path.read_text())
+            selected = arm / "checkpoints" / "all" / "step_000092160.pt"
+            selected.parent.mkdir(exist_ok=True)
+            torch.save({"total_macro_steps": 92160}, selected)
+            report["checkpoints"]["selected_from"] = str(selected)
+            report["validation"] = {
+                **report["validation"],
+                "mean_return": -12.0,
+                "mean_estimated_rate_mbps": 19.0,
+                "mean_relative_rate_percent": 74.0,
+                "p10_relative_rate_percent": 59.0,
+                "rlf_time_percent": 1.7,
+                "handover_failure_percent": 0.0,
+                "ping_pong_percent": 0.0,
+                "handover_fraction": 0.0,
+                "action_fractions": {"STAY": 1.0, "HO_C1": 0.0},
+            }
+            report_path.write_text(json.dumps(report))
+
+            record = summarize_arm(arm)
+
+        self.assertEqual(record["selected_step"], 92160)
+        self.assertFalse(record["selected_step_inferred"])
+        self.assertEqual(record["selected_step_source"], "checkpoint_filename")
 
     def test_summary_writes_registry_formats(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

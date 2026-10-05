@@ -30,6 +30,8 @@ from ho_optim_drl.smdp import (
     MacroTransition,
     MacroTransitionBuilder,
     RewardBreakdown,
+    STAY_MODE_REJECT_EVENT,
+    SUPPORTED_STAY_MODES,
     SUPPORTED_REWARD_SCHEMAS,
     TopologyCandidateObservationBuilder,
     TrajectoryQoSRewardConfig,
@@ -64,6 +66,8 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
         candidate_count: int = 10,
         candidate_order: str = "legacy",
         observation_schema: str = "legacy_v1",
+        stay_mode: str = STAY_MODE_REJECT_EVENT,
+        stay_redecision_ms: int = 100,
     ) -> None:
         super().__init__()
         if protocol_config is None and data_dir is not None:
@@ -71,6 +75,17 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
             protocol_config = load_protocol_config(data_dir)
         self.config = copy.deepcopy(protocol_config or Config())
         self.config.validate()
+        if stay_mode not in SUPPORTED_STAY_MODES:
+            raise ValueError(f"Unsupported STAY mode: {stay_mode!r}.")
+        if (
+            not isinstance(stay_redecision_ms, int)
+            or isinstance(stay_redecision_ms, bool)
+            or stay_redecision_ms <= 0
+            or stay_redecision_ms % self.config.delta_t_ms != 0
+        ):
+            raise ValueError(
+                "stay_redecision_ms must be a positive multiple of delta_t_ms."
+            )
 
         self._data_dir: str | None = None
         self._traces: tuple[RadioTrace, ...] | None = None
@@ -102,6 +117,10 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
             observation_builder,
             reward_model,
             gamma_per_second=gamma_per_second,
+            stay_mode=stay_mode,
+            stay_redecision_ticks=(
+                stay_redecision_ms // self.config.delta_t_ms
+            ),
         )
 
         self.action_space = spaces.Discrete(candidate_count + 1)
@@ -184,6 +203,11 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
                 self.transition_builder.reward_model.config
             ),
             "discount_mode": "intra_macro_time_consistent_v1",
+            "stay_mode": self.transition_builder.stay_mode,
+            "stay_redecision_ms": (
+                self.transition_builder.stay_redecision_ticks
+                * self.config.delta_t_ms
+            ),
         }
 
     def validate_checkpoint_objective(
@@ -208,6 +232,8 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
             "candidate_count",
             "observation_schema_key",
             "reward_config",
+            "stay_mode",
+            "stay_redecision_ms",
         )
         mismatches = [
             field_name

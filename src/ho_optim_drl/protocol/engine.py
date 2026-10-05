@@ -32,6 +32,8 @@ class HandoverEngine(A3ReferenceSimulator):
         self._terminated = False
         self._decision_point: DecisionPoint | None = None
         self._suppressed_event: tuple[int, int] | None = None
+        self._redecision_due_tic: int | None = None
+        self._redecision_a3_start_tic: int | None = None
         self._handover_started_pending = False
         self._serving_residence_start_tic = 0
         self._last_ho_tic: int | None = None
@@ -52,6 +54,8 @@ class HandoverEngine(A3ReferenceSimulator):
         self._terminated = False
         self._decision_point = None
         self._suppressed_event = None
+        self._redecision_due_tic = None
+        self._redecision_a3_start_tic = None
         self._handover_started_pending = False
         self._serving_residence_start_tic = 0
         self._last_ho_tic = None
@@ -124,12 +128,28 @@ class HandoverEngine(A3ReferenceSimulator):
             recent_ho_count=recent_ho_count,
         )
 
-    def stay(self) -> None:
-        """Reject the current A3 event until it leaves or the target changes."""
+    def stay(self, *, redecision_delay_ticks: int | None = None) -> None:
+        """Reject an A3 event, optionally offering it again after a delay."""
         decision = self._require_decision()
+        if redecision_delay_ticks is not None and (
+            not isinstance(redecision_delay_ticks, int)
+            or isinstance(redecision_delay_ticks, bool)
+            or redecision_delay_ticks <= 0
+        ):
+            raise ValueError("redecision_delay_ticks must be a positive integer.")
         self._suppressed_event = (
             decision.serving_cell,
             decision.target_cell,
+        )
+        self._redecision_due_tic = (
+            None
+            if redecision_delay_ticks is None
+            else decision.tic + redecision_delay_ticks
+        )
+        self._redecision_a3_start_tic = (
+            None
+            if redecision_delay_ticks is None
+            else decision.a3_start_tic
         )
         self._decision_point = None
         self.event_handler.target_cell = None
@@ -150,10 +170,10 @@ class HandoverEngine(A3ReferenceSimulator):
         if selected == decision.serving_cell:
             raise ValueError("Handover target cannot be the serving cell.")
 
+        self._clear_suppression()
         self.event_handler.target_cell = selected
         self.cntr["ho_prep"].start(decision.tic)
         self._decision_point = None
-        self._suppressed_event = None
         self._handover_started_pending = True
 
     def advance_one_tick(self) -> TickResult:
@@ -260,6 +280,31 @@ class HandoverEngine(A3ReferenceSimulator):
         )
         if not a3_entered:
             self._clear_suppression()
+            return
+
+        if (
+            self._redecision_due_tic is not None
+            and tic >= self._redecision_due_tic
+        ):
+            a3_start_tic = self._redecision_a3_start_tic
+            if a3_start_tic is None:
+                raise RuntimeError("Redecision event is missing its A3 start tic.")
+            margin_db = (
+                self._trace.rsrp_a3_db[ncell, tic]
+                - self._trace.rsrp_a3_db[pcell, tic]
+                - self.config.a3_hys
+                - self.config.a3_off
+            )
+            self._decision_point = DecisionPoint(
+                tic=tic,
+                serving_cell=pcell,
+                target_cell=ncell,
+                a3_start_tic=a3_start_tic,
+                a3_margin_db=float(margin_db),
+            )
+            self._suppressed_event = None
+            self._redecision_due_tic = None
+            self._redecision_a3_start_tic = None
 
     def _action_controlled_ho_state_machine(
         self,
@@ -309,6 +354,8 @@ class HandoverEngine(A3ReferenceSimulator):
 
     def _clear_suppression(self, reset_a3: bool = False) -> None:
         self._suppressed_event = None
+        self._redecision_due_tic = None
+        self._redecision_a3_start_tic = None
         self.event_handler.target_cell = None
         if reset_a3:
             self.event_handler.conditions["a3"] = False

@@ -98,6 +98,71 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(first_decision_tic, 4)
         self.assertEqual(engine.decision_point.tic, 13)
 
+    def test_stay_reoffers_same_valid_a3_event_after_delay(self) -> None:
+        rsrp = np.vstack(
+            (
+                np.full(20, -80.0),
+                np.full(20, -77.0),
+            )
+        )
+        engine = HandoverEngine(Config())
+        engine.reset(_trace(rsrp, _constant_sinr(2, 20)))
+
+        for _ in range(5):
+            engine.advance_one_tick()
+        self.assertEqual(engine.decision_point.tic, 4)
+        engine.stay(redecision_delay_ticks=10)
+
+        for _ in range(9):
+            tick = engine.advance_one_tick()
+            self.assertNotEqual(tick.snapshot.phase, ProtocolPhase.DECISION)
+        tick = engine.advance_one_tick()
+
+        self.assertEqual(tick.snapshot.phase, ProtocolPhase.DECISION)
+        self.assertEqual(engine.decision_point.tic, 14)
+        self.assertEqual(engine.decision_point.target_cell, 1)
+        self.assertEqual(engine.decision_point.a3_start_tic, 0)
+
+    def test_stay_redecision_is_cancelled_when_a3_leaves(self) -> None:
+        rsrp = np.vstack(
+            (
+                np.full(20, -80.0),
+                np.array([-77.0] * 8 + [-82.0] * 12),
+            )
+        )
+        engine = HandoverEngine(Config())
+        engine.reset(_trace(rsrp, _constant_sinr(2, 20)))
+
+        for _ in range(5):
+            engine.advance_one_tick()
+        engine.stay(redecision_delay_ticks=10)
+
+        while not engine.snapshot.phase is ProtocolPhase.TERMINATED:
+            tick = engine.advance_one_tick()
+            self.assertIsNone(engine.decision_point)
+            if tick.terminated:
+                break
+
+    def test_target_change_starts_a_new_ttt_before_redecision_deadline(self) -> None:
+        rsrp = np.vstack(
+            (
+                np.full(20, -80.0),
+                np.array([-77.0] * 5 + [-90.0] * 15),
+                np.array([-90.0] * 5 + [-76.0] * 15),
+            )
+        )
+        engine = HandoverEngine(Config())
+        engine.reset(_trace(rsrp, _constant_sinr(3, 20)))
+
+        for _ in range(5):
+            engine.advance_one_tick()
+        engine.stay(redecision_delay_ticks=10)
+        while engine.decision_point is None:
+            engine.advance_one_tick()
+
+        self.assertEqual(engine.decision_point.tic, 9)
+        self.assertEqual(engine.decision_point.target_cell, 2)
+
 class HandoverTests(unittest.TestCase):
     def test_handover_uses_latched_target_when_strongest_cell_changes(self) -> None:
         config = Config()

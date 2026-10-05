@@ -95,6 +95,81 @@ def run(argv=None) -> int:
     observation_audit_parser.add_argument(
         "--output-dir", default="results/audit/p2_observations"
     )
+    learning_audit_parser = subparsers.add_parser(
+        "audit_policy_learning",
+        help="Build/probe the D1 TRAIN state bank or run D2 counterfactuals.",
+    )
+    learning_audit_parser.add_argument(
+        "mode",
+        choices=(
+            "build-bank",
+            "probe",
+            "counterfactual",
+            "supervised-probe",
+            "transition-probe",
+        ),
+    )
+    learning_audit_parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    learning_audit_parser.add_argument("--bank-dir", default=None)
+    learning_audit_parser.add_argument("--speeds", type=int, nargs="+", default=None)
+    learning_audit_parser.add_argument("--train-fraction", type=float, default=0.70)
+    learning_audit_parser.add_argument(
+        "--validation-fraction", type=float, default=0.15
+    )
+    learning_audit_parser.add_argument("--test-fraction", type=float, default=0.15)
+    learning_audit_parser.add_argument("--split-seed", type=int, default=17)
+    learning_audit_parser.add_argument("--sample-seed", type=int, default=17)
+    learning_audit_parser.add_argument("--routes-per-speed", type=int, default=5)
+    learning_audit_parser.add_argument(
+        "--decision-indices", type=int, nargs="+", default=[0, 1, 2, 3]
+    )
+    learning_audit_parser.add_argument(
+        "--candidate-count", type=int, choices=(3, 5, 10), default=3
+    )
+    learning_audit_parser.add_argument(
+        "--candidate-order", choices=("legacy", "ranked_v1"), default="ranked_v1"
+    )
+    learning_audit_parser.add_argument(
+        "--observation-schemas",
+        nargs="+",
+        choices=("legacy_v1", "rolling_v1", "monotonic_v1", "qos_full_v1"),
+        default=["rolling_v1", "monotonic_v1", "qos_full_v1"],
+    )
+    learning_audit_parser.add_argument(
+        "--source-checkpoint",
+        action="append",
+        default=[],
+        metavar="LABEL=PATH",
+    )
+    learning_audit_parser.add_argument(
+        "--checkpoint", action="append", default=[], metavar="LABEL=PATH"
+    )
+    learning_audit_parser.add_argument("--include-fresh", action="store_true")
+    learning_audit_parser.add_argument("--seed", type=int, default=17)
+    learning_audit_parser.add_argument(
+        "--horizons", type=float, nargs="+", default=[0.5, 1.0, 2.0]
+    )
+    learning_audit_parser.add_argument("--gamma-per-second", type=float, default=0.99)
+    learning_audit_parser.add_argument("--counterfactual-dir", default=None)
+    learning_audit_parser.add_argument(
+        "--probe-observation-schema",
+        choices=("legacy_v1", "rolling_v1", "monotonic_v1", "qos_full_v1"),
+        default="qos_full_v1",
+    )
+    learning_audit_parser.add_argument(
+        "--probe-reward-schema", default="trajectory_qos_reward_v1"
+    )
+    learning_audit_parser.add_argument("--probe-horizon", type=float, default=1.0)
+    learning_audit_parser.add_argument("--route-split-seed", type=int, default=29)
+    learning_audit_parser.add_argument(
+        "--rollout-probe-steps", type=int, default=1024
+    )
+    learning_audit_parser.add_argument(
+        "--transition-horizon", type=float, default=1.0
+    )
+    learning_audit_parser.add_argument(
+        "--output-dir", default="results/analysis/p23_diagnostics/state_bank_pilot"
+    )
     summary_parser = subparsers.add_parser(
         "summarize_ablation",
         help="Validate and summarize completed PPO screening arms.",
@@ -192,6 +267,21 @@ def run(argv=None) -> int:
             "rescaled events, recovery-time cost, or per-speed dual QoS."
         ),
     )
+    train_parser.add_argument(
+        "--stay-mode",
+        choices=("reject_event_v1", "a3_redecision_v1"),
+        default="reject_event_v1",
+        help=(
+            "STAY either suppresses the completed A3 event until rearm or "
+            "offers the same still-valid event again after a fixed delay."
+        ),
+    )
+    train_parser.add_argument(
+        "--stay-redecision-ms",
+        type=int,
+        default=100,
+        help="Delay before re-offering a still-valid A3 event in redecision mode.",
+    )
     train_parser.add_argument("--dual-target-ratio", type=float, default=0.98)
     train_parser.add_argument("--dual-learning-rate", type=float, default=0.5)
     train_parser.add_argument(
@@ -204,6 +294,33 @@ def run(argv=None) -> int:
     train_parser.add_argument("--batch-size", type=int, default=128)
     train_parser.add_argument("--update-epochs", type=int, default=4)
     train_parser.add_argument("--hidden-sizes", type=int, nargs="+", default=[64, 64])
+    train_parser.add_argument(
+        "--network-architecture",
+        choices=("shared_mlp_v1", "separate_mlp_v1", "candidate_scorer_v1"),
+        default="shared_mlp_v1",
+        help="D3-A control: shared or separate actor/critic MLP encoders.",
+    )
+    train_parser.add_argument(
+        "--value-normalization",
+        choices=("none", "fixed_scale_v1"),
+        default="none",
+        help="D3-B critic target scaling; rewards and advantages remain raw.",
+    )
+    train_parser.add_argument(
+        "--value-target-scale",
+        type=float,
+        default=None,
+        help=(
+            "Fixed critic scale. Omit with fixed_scale_v1 to fit it from a "
+            "frozen TRAIN Always-HO-C1 calibration subset."
+        ),
+    )
+    train_parser.add_argument(
+        "--value-scale-calibration-routes-per-speed",
+        type=int,
+        default=20,
+        help="TRAIN routes per speed used when auto-fitting D3-B scale.",
+    )
     train_parser.add_argument("--learning-rate", type=float, default=5e-5)
     train_parser.add_argument("--clip-range", type=float, default=0.2)
     train_parser.add_argument("--value-coefficient", type=float, default=0.5)
@@ -212,6 +329,14 @@ def run(argv=None) -> int:
     train_parser.add_argument("--gamma-per-second", type=float, default=0.99)
     train_parser.add_argument("--lambda-per-second", type=float, default=0.95)
     train_parser.add_argument("--target-kl", type=float, default=0.03)
+    train_parser.add_argument(
+        "--learning-diagnostics",
+        action="store_true",
+        help=(
+            "Log first-minibatch actor/critic/entropy gradient diagnostics; "
+            "disabled by default and compatible with legacy checkpoints."
+        ),
+    )
     train_parser.add_argument("--evaluation-interval", type=int, default=10_240)
     train_parser.add_argument(
         "--qos-rate-ratio",
@@ -387,6 +512,16 @@ def run(argv=None) -> int:
         from ho_optim_drl.commands import audit_observations
 
         return audit_observations.main(root_path, args)
+    if args.command == "audit_policy_learning":
+        from ho_optim_drl.commands import audit_policy_learning
+
+        if args.mode in {"probe", "counterfactual", "supervised-probe"} and not args.bank_dir:
+            parser.error(f"audit_policy_learning {args.mode} requires --bank-dir")
+        if args.mode == "supervised-probe" and not args.counterfactual_dir:
+            parser.error(
+                "audit_policy_learning supervised-probe requires --counterfactual-dir"
+            )
+        return audit_policy_learning.main(root_path, args)
     if args.command == "summarize_ablation":
         from ho_optim_drl.commands import summarize_ablation
 

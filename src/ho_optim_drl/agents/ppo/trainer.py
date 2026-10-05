@@ -25,6 +25,10 @@ from .network import ActorCritic
 from .rollout import SMDPRolloutBuffer
 
 ProgressCallback = Callable[[dict[str, Any]], None]
+TransitionDiagnosticCallback = Callable[
+    [HandoverSMDPEnv, np.ndarray, np.ndarray, int, np.ndarray],
+    dict[str, Any],
+]
 
 
 @dataclass(frozen=True)
@@ -33,6 +37,8 @@ class PPOUpdateMetrics:
 
     policy_loss: float
     value_loss: float
+    value_loss_normalized: float
+    raw_value_mse: float
     entropy: float
     normalized_entropy: float
     approximate_kl: float
@@ -40,6 +46,7 @@ class PPOUpdateMetrics:
     gradient_norm: float
     explained_variance: float
     epochs_completed: int
+    learning_diagnostics: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -607,6 +614,9 @@ class SMDPPPO:
             action_size,
             hidden_sizes=self.config.hidden_sizes,
             activation=self.config.activation,
+            architecture=self.config.network_architecture,
+            candidate_feature_size=self.config.candidate_feature_size,
+            value_target_scale=self.config.value_target_scale,
         ).to(self.device)
         self.optimizer = torch.optim.Adam(
             self.model.parameters(),
@@ -644,6 +654,7 @@ class SMDPPPO:
         reset_seed: int | None = None,
         progress_callback: ProgressCallback | None = None,
         progress_interval: int = 50,
+        transition_diagnostic_callback: TransitionDiagnosticCallback | None = None,
     ) -> tuple[SMDPRolloutBuffer, list[EpisodeRecord]]:
         """Collect consecutive macro-transitions across episode boundaries."""
         self._validate_environment(env)
@@ -712,6 +723,17 @@ class SMDPPPO:
                 deterministic=False,
                 action_mask=action_mask,
             )
+            transition_metadata = (
+                None
+                if transition_diagnostic_callback is None
+                else transition_diagnostic_callback(
+                    env,
+                    observation.copy(),
+                    action_mask.copy(),
+                    action,
+                    probabilities.copy(),
+                )
+            )
             (
                 next_observation,
                 reward,
@@ -773,6 +795,7 @@ class SMDPPPO:
                 truncated=truncated,
                 trace_id=str(info["trace_id"]),
                 action_mask=action_mask,
+                transition_metadata=transition_metadata,
             )
             self.total_macro_steps += 1
 
@@ -865,6 +888,7 @@ class SMDPPPO:
         metric_values: dict[str, list[float]] = {
             "policy_loss": [],
             "value_loss": [],
+            "raw_value_mse": [],
             "entropy": [],
             "normalized_entropy": [],
             "approximate_kl": [],
@@ -873,7 +897,16 @@ class SMDPPPO:
         }
         epochs_completed = 0
         stop_early = False
+        learning_diagnostics: dict[str, Any] | None = None
         self.model.train()
+        pre_update_probabilities: torch.Tensor | None = None
+        if self.config.learning_diagnostics:
+            with torch.no_grad():
+                pre_distribution, _ = self.model.distribution_and_value(
+                    tensors.observations,
+                    tensors.action_masks,
+                )
+                pre_update_probabilities = pre_distribution.probs.detach().clone()
 
         for _ in range(self.config.update_epochs):
             permutation = torch.randperm(buffer.size, device=self.device)
@@ -928,8 +961,19 @@ class SMDPPPO:
                     unclipped_loss,
                     clipped_loss,
                 ).mean()
+                normalized_values = (
+                    values / self.config.value_target_scale
+                )
+                normalized_returns = (
+                    tensors.returns[indices]
+                    / self.config.value_target_scale
+                )
                 value_loss = 0.5 * nn.functional.mse_loss(
-                    values,
+                    normalized_values,
+                    normalized_returns,
+                )
+                raw_value_mse = nn.functional.mse_loss(
+                    values.detach(),
                     tensors.returns[indices],
                 )
                 loss = (
@@ -937,6 +981,19 @@ class SMDPPPO:
                     + self.config.value_coefficient * value_loss
                     - self.config.entropy_coefficient * entropy
                 )
+
+                if (
+                    self.config.learning_diagnostics
+                    and learning_diagnostics is None
+                ):
+                    learning_diagnostics = self._first_minibatch_diagnostics(
+                        policy_loss=policy_loss,
+                        value_loss=value_loss,
+                        entropy=entropy,
+                        values=values,
+                        returns=tensors.returns[indices],
+                        advantages=advantages,
+                    )
 
                 self.optimizer.zero_grad(set_to_none=True)
                 loss.backward()
@@ -957,6 +1014,9 @@ class SMDPPPO:
                     )
                 metric_values["policy_loss"].append(float(policy_loss.item()))
                 metric_values["value_loss"].append(float(value_loss.item()))
+                metric_values["raw_value_mse"].append(
+                    float(raw_value_mse.item())
+                )
                 metric_values["entropy"].append(float(entropy.item()))
                 metric_values["normalized_entropy"].append(
                     float(normalized_entropy.item())
@@ -987,9 +1047,41 @@ class SMDPPPO:
             tensors.old_values,
             tensors.returns,
         )
+        if learning_diagnostics is not None:
+            with torch.no_grad():
+                post_distribution, post_values = self.model.distribution_and_value(
+                    tensors.observations,
+                    tensors.action_masks,
+                )
+            learning_diagnostics["rollout_distributions"] = {
+                "returns": self._tensor_summary(tensors.returns),
+                "advantages": self._tensor_summary(tensors.advantages),
+                "values_pre": self._tensor_summary(tensors.old_values),
+                "values_post": self._tensor_summary(post_values),
+            }
+            learning_diagnostics["explained_variance_pre"] = (
+                explained_variance
+            )
+            learning_diagnostics["explained_variance_post"] = (
+                self._explained_variance(post_values, tensors.returns)
+            )
+            learning_diagnostics["action_update"] = (
+                self._action_update_diagnostics(
+                    tensors=tensors,
+                    raw_advantages=torch.as_tensor(
+                        buffer.advantages[: buffer.size],
+                        dtype=torch.float32,
+                        device=self.device,
+                    ),
+                    probabilities_pre=pre_update_probabilities,
+                    probabilities_post=post_distribution.probs,
+                )
+            )
         return PPOUpdateMetrics(
             policy_loss=self._mean(metric_values["policy_loss"]),
             value_loss=self._mean(metric_values["value_loss"]),
+            value_loss_normalized=self._mean(metric_values["value_loss"]),
+            raw_value_mse=self._mean(metric_values["raw_value_mse"]),
             entropy=self._mean(metric_values["entropy"]),
             normalized_entropy=self._mean(
                 metric_values["normalized_entropy"]
@@ -999,7 +1091,213 @@ class SMDPPPO:
             gradient_norm=self._mean(metric_values["gradient_norm"]),
             explained_variance=explained_variance,
             epochs_completed=epochs_completed,
+            learning_diagnostics=learning_diagnostics,
         )
+
+    def _action_update_diagnostics(
+        self,
+        *,
+        tensors: Any,
+        raw_advantages: torch.Tensor,
+        probabilities_pre: torch.Tensor | None,
+        probabilities_post: torch.Tensor,
+    ) -> dict[str, Any]:
+        """Summarize PPO's update signal and probability movement per action."""
+        if probabilities_pre is None:
+            raise RuntimeError("Pre-update probabilities were not captured.")
+        actions = tensors.actions
+        masks = tensors.action_masks
+        normalized_advantages = tensors.advantages
+        delta = probabilities_post - probabilities_pre
+        records: dict[str, Any] = {}
+        for action_index in range(self.model.action_size):
+            name = HandoverAction(action_index).name
+            chosen = actions == action_index
+            available = (
+                torch.ones_like(chosen, dtype=torch.bool)
+                if masks is None
+                else masks[:, action_index]
+            )
+            chosen_count = int(chosen.sum().item())
+            available_count = int(available.sum().item())
+            record: dict[str, Any] = {
+                "action_index": action_index,
+                "chosen_count": chosen_count,
+                "available_count": available_count,
+                "chosen_fraction": float(chosen.float().mean().item()),
+                "availability_fraction": float(available.float().mean().item()),
+            }
+            if chosen_count:
+                selected_raw = raw_advantages[chosen]
+                selected_normalized = normalized_advantages[chosen]
+                selected_old_log = tensors.old_log_probabilities[chosen]
+                selected_post_log = torch.log(
+                    probabilities_post[chosen, action_index].clamp_min(1e-12)
+                )
+                record.update(
+                    {
+                        "raw_advantage": self._tensor_summary(selected_raw),
+                        "normalized_advantage": self._tensor_summary(
+                            selected_normalized
+                        ),
+                        "positive_advantage_fraction": float(
+                            (selected_raw > 0).float().mean().item()
+                        ),
+                        "mean_probability_ratio_for_chosen": float(
+                            torch.exp(selected_post_log - selected_old_log)
+                            .mean()
+                            .item()
+                        ),
+                    }
+                )
+            else:
+                record.update(
+                    {
+                        "raw_advantage": None,
+                        "normalized_advantage": None,
+                        "positive_advantage_fraction": None,
+                        "mean_probability_ratio_for_chosen": None,
+                    }
+                )
+            if available_count:
+                record.update(
+                    {
+                        "mean_probability_pre_when_available": float(
+                            probabilities_pre[available, action_index].mean().item()
+                        ),
+                        "mean_probability_post_when_available": float(
+                            probabilities_post[available, action_index].mean().item()
+                        ),
+                        "mean_probability_delta_when_available": float(
+                            delta[available, action_index].mean().item()
+                        ),
+                        "positive_probability_delta_fraction": float(
+                            (delta[available, action_index] > 0)
+                            .float()
+                            .mean()
+                            .item()
+                        ),
+                    }
+                )
+            else:
+                record.update(
+                    {
+                        "mean_probability_pre_when_available": None,
+                        "mean_probability_post_when_available": None,
+                        "mean_probability_delta_when_available": None,
+                        "positive_probability_delta_fraction": None,
+                    }
+                )
+            records[name] = record
+        return {
+            "rollout_size": int(actions.numel()),
+            "actions": records,
+        }
+
+    def _first_minibatch_diagnostics(
+        self,
+        *,
+        policy_loss: torch.Tensor,
+        value_loss: torch.Tensor,
+        entropy: torch.Tensor,
+        values: torch.Tensor,
+        returns: torch.Tensor,
+        advantages: torch.Tensor,
+    ) -> dict[str, Any]:
+        """Measure objective gradients without mutating parameter ``.grad``."""
+        named = list(self.model.named_parameters())
+        parameters = [parameter for _, parameter in named]
+        terms = {
+            "actor": policy_loss,
+            "critic": self.config.value_coefficient * value_loss,
+            "entropy": -self.config.entropy_coefficient * entropy,
+        }
+        vectors: dict[str, torch.Tensor] = {}
+        by_term: dict[str, Any] = {}
+        for term_name, term in terms.items():
+            gradients = torch.autograd.grad(
+                term,
+                parameters,
+                retain_graph=True,
+                allow_unused=True,
+            )
+            flat_parts = []
+            group_squares = {
+                "encoder": 0.0,
+                "actor_encoder": 0.0,
+                "critic_encoder": 0.0,
+                "policy_head": 0.0,
+                "stay_encoder": 0.0,
+                "candidate_encoder": 0.0,
+                "stay_head": 0.0,
+                "candidate_head": 0.0,
+                "value_head": 0.0,
+            }
+            for (name, parameter), gradient in zip(named, gradients):
+                value = (
+                    torch.zeros_like(parameter)
+                    if gradient is None
+                    else gradient.detach()
+                )
+                flat_parts.append(value.reshape(-1))
+                group = name.split(".", 1)[0]
+                if group in group_squares:
+                    group_squares[group] += float(
+                        torch.sum(value * value).item()
+                    )
+            vector = torch.cat(flat_parts)
+            vectors[term_name] = vector
+            by_term[term_name] = {
+                "objective_value": float(term.detach().item()),
+                "global_norm": float(torch.linalg.vector_norm(vector).item()),
+                "group_norms": {
+                    group: math.sqrt(square)
+                    for group, square in group_squares.items()
+                },
+            }
+        actor = vectors["actor"]
+        critic = vectors["critic"]
+        denominator = float(
+            torch.linalg.vector_norm(actor).item()
+            * torch.linalg.vector_norm(critic).item()
+        )
+        cosine = (
+            float(torch.dot(actor, critic).item()) / denominator
+            if denominator > 0
+            else None
+        )
+        total = actor + critic + vectors["entropy"]
+        total_norm = float(torch.linalg.vector_norm(total).item())
+        return {
+            "scope": "first_minibatch_before_optimizer_step",
+            "weighted_objective_terms": True,
+            "terms": by_term,
+            "actor_critic_cosine": cosine,
+            "total_gradient_norm_before_clip": total_norm,
+            "gradient_clipping_factor": (
+                min(1.0, self.config.max_grad_norm / total_norm)
+                if total_norm > 0
+                else 1.0
+            ),
+            "minibatch_distributions": {
+                "returns": self._tensor_summary(returns),
+                "advantages": self._tensor_summary(advantages),
+                "values": self._tensor_summary(values),
+            },
+        }
+
+    @staticmethod
+    def _tensor_summary(values: torch.Tensor) -> dict[str, float]:
+        array = values.detach().float().cpu().numpy()
+        return {
+            "mean": float(np.mean(array)),
+            "std": float(np.std(array)),
+            "min": float(np.min(array)),
+            "p10": float(np.percentile(array, 10)),
+            "median": float(np.median(array)),
+            "p90": float(np.percentile(array, 90)),
+            "max": float(np.max(array)),
+        }
 
     def evaluate(
         self,
@@ -1261,6 +1559,7 @@ class SMDPPPO:
 
         history: list[dict[str, Any]] = []
         next_evaluation = evaluation_interval
+        last_validation_step: int | None = None
         best_validation_return = -math.inf
         self._emit(
             progress_callback,
@@ -1318,10 +1617,21 @@ class SMDPPPO:
                 },
             )
 
-            if (
-                validation_env is not None
-                and self.total_macro_steps >= next_evaluation
+            scheduled_validation_due = (
+                self.total_macro_steps >= next_evaluation
+            )
+            budget_end_validation_due = (
+                self.total_macro_steps >= total_macro_steps
+                and last_validation_step != self.total_macro_steps
+            )
+            if validation_env is not None and (
+                scheduled_validation_due or budget_end_validation_due
             ):
+                validation_trigger = (
+                    "scheduled"
+                    if scheduled_validation_due
+                    else "budget_end"
+                )
                 reward_state = reward_model.state_dict()
                 validation_env.load_reward_state(reward_state)
                 if checkpoint_manager is not None:
@@ -1335,6 +1645,7 @@ class SMDPPPO:
                         "macro_steps": self.total_macro_steps,
                         "update": self.update_count,
                         "trajectories": validation_env.num_trajectories,
+                        "validation_trigger": validation_trigger,
                     },
                 )
                 evaluation = self.evaluate(validation_env)
@@ -1348,6 +1659,7 @@ class SMDPPPO:
                     record["checkpoint_selection"] = checkpoint_selection
                 while next_evaluation <= self.total_macro_steps:
                     next_evaluation += evaluation_interval
+                last_validation_step = self.total_macro_steps
                 if (
                     checkpoint_path is not None
                     and evaluation.mean_return > best_validation_return
@@ -1372,6 +1684,7 @@ class SMDPPPO:
                         "macro_steps": self.total_macro_steps,
                         "update": self.update_count,
                         "is_best": is_best,
+                        "validation_trigger": validation_trigger,
                         **(checkpoint_selection or {}),
                         **asdict(evaluation),
                     },
@@ -1420,6 +1733,10 @@ class SMDPPPO:
                 "model_spec": {
                     "observation_size": self.model.observation_size,
                     "action_size": self.model.action_size,
+                    "network_architecture": self.model.architecture,
+                    "candidate_feature_size": self.model.candidate_feature_size,
+                    "value_normalization": self.config.value_normalization,
+                    "value_target_scale": self.config.value_target_scale,
                     "action_names": [
                         action.name
                         for action in list(HandoverAction)[
@@ -1459,6 +1776,15 @@ class SMDPPPO:
         checkpoint = self._load_checkpoint_payload(path, self.device)
         if checkpoint.get("format_version") != 1:
             raise ValueError("Unsupported PPO checkpoint format.")
+        saved_config = dict(checkpoint.get("config", {}))
+        saved_architecture = saved_config.get(
+            "network_architecture", "shared_mlp_v1"
+        )
+        saved_scale = float(saved_config.get("value_target_scale", 1.0))
+        if saved_architecture != self.config.network_architecture:
+            raise ValueError("Cannot load a checkpoint across architectures.")
+        if saved_scale != self.config.value_target_scale:
+            raise ValueError("Cannot load a checkpoint across value scales.")
         self.model.load_state_dict(checkpoint["model_state"])
         if load_optimizer:
             self.optimizer.load_state_dict(checkpoint["optimizer_state"])
@@ -1521,7 +1847,21 @@ class SMDPPPO:
             )
         config_values = dict(checkpoint["config"])
         config_values["hidden_sizes"] = tuple(config_values["hidden_sizes"])
+        # Legacy checkpoints predate D3 and are exactly the shared, unscaled
+        # control. Defaults make that contract explicit without key guessing.
+        config_values.setdefault("network_architecture", "shared_mlp_v1")
+        config_values.setdefault("candidate_feature_size", 15)
+        config_values.setdefault("value_normalization", "none")
+        config_values.setdefault("value_target_scale", 1.0)
         config = SMDPPPOConfig(**config_values)
+        saved_architecture = model_spec.get("network_architecture")
+        if (
+            saved_architecture is not None
+            and saved_architecture != config.network_architecture
+        ):
+            raise ValueError(
+                "Checkpoint model_spec architecture disagrees with config."
+            )
         if device is not None:
             config = replace(config, device=device)
         agent = cls(saved_observation_size, saved_action_size, config)

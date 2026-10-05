@@ -182,6 +182,8 @@ def main(root_path: str, args: Namespace) -> int:
         reward_schema,
         objective.get("reward_config"),
     )
+    stay_mode = str(objective.get("stay_mode", "reject_event_v1"))
+    stay_redecision_ms = int(objective.get("stay_redecision_ms", 100))
     protocol_config = load_protocol_config(data_dir, checkpoint_extra)
     if args.split_seed is None:
         args.split_seed = checkpoint_extra.get("split_seed", 17)
@@ -245,6 +247,8 @@ def main(root_path: str, args: Namespace) -> int:
             observation_schema=observation_schema,
             reward_schema=reward_schema,
             reward_config=reward_config,
+            stay_mode=stay_mode,
+            stay_redecision_ms=stay_redecision_ms,
         )
         env.load_reward_state(checkpoint_extra.get("reward_state"))
         env.validate_checkpoint_objective(checkpoint_extra)

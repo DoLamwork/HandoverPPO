@@ -24,12 +24,21 @@ from .reward import (
     reward_config_from_dict,
     trajectory_reward_config,
 )
-from .transition import MacroTransition, MacroTransitionBuilder
+from .transition import (
+    MacroTransition,
+    MacroTransitionBuilder,
+    STAY_MODE_A3_REDECISION,
+    STAY_MODE_REJECT_EVENT,
+    SUPPORTED_STAY_MODES,
+)
 
 __all__ = [
     "HandoverAction",
     "MacroTransition",
     "MacroTransitionBuilder",
+    "STAY_MODE_A3_REDECISION",
+    "STAY_MODE_REJECT_EVENT",
+    "SUPPORTED_STAY_MODES",
     "A3ObservationBuilder",
     "A3ObservationConfig",
     "ObservationBuilder",

@@ -14,6 +14,14 @@ from .observation import ObservationBuilder
 from .reward import RewardBreakdown, RewardModel
 
 
+STAY_MODE_REJECT_EVENT = "reject_event_v1"
+STAY_MODE_A3_REDECISION = "a3_redecision_v1"
+SUPPORTED_STAY_MODES = (
+    STAY_MODE_REJECT_EVENT,
+    STAY_MODE_A3_REDECISION,
+)
+
+
 @dataclass(frozen=True)
 class MacroTransition:
     """One decision-to-decision transition with variable duration."""
@@ -100,16 +108,28 @@ class MacroTransitionBuilder:
         reward_model: RewardModel,
         *,
         gamma_per_second: float = 0.99,
+        stay_mode: str = STAY_MODE_REJECT_EVENT,
+        stay_redecision_ticks: int = 10,
     ) -> None:
         if not math.isfinite(gamma_per_second):
             raise ValueError("gamma_per_second must be finite.")
         if not 0 < gamma_per_second <= 1:
             raise ValueError("gamma_per_second must be in (0, 1].")
+        if stay_mode not in SUPPORTED_STAY_MODES:
+            raise ValueError(f"Unsupported STAY mode: {stay_mode!r}.")
+        if (
+            not isinstance(stay_redecision_ticks, int)
+            or isinstance(stay_redecision_ticks, bool)
+            or stay_redecision_ticks <= 0
+        ):
+            raise ValueError("stay_redecision_ticks must be a positive integer.")
 
         self.engine = engine
         self.observation_builder = observation_builder
         self.reward_model = reward_model
         self.gamma_per_second = gamma_per_second
+        self.stay_mode = stay_mode
+        self.stay_redecision_ticks = stay_redecision_ticks
         self._current_observation: np.ndarray | None = None
         self._terminated = False
         self._uncontrolled_duration_ticks = 0
@@ -228,7 +248,13 @@ class MacroTransitionBuilder:
 
     def _apply_action(self, action: HandoverAction) -> None:
         if action is HandoverAction.STAY:
-            self.engine.stay()
+            self.engine.stay(
+                redecision_delay_ticks=(
+                    self.stay_redecision_ticks
+                    if self.stay_mode == STAY_MODE_A3_REDECISION
+                    else None
+                )
+            )
         elif action.is_handover:
             if not isinstance(
                 self.observation_builder,

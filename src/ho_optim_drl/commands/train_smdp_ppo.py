@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from argparse import Namespace
-from collections import Counter
-from dataclasses import asdict
+from collections import Counter, defaultdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 import csv
 import hashlib
 import json
+import math
 import os
 import subprocess
 import time
@@ -238,6 +239,83 @@ def build_dataset_manifest(
     return manifest
 
 
+def select_value_scale_calibration_pairs(
+    train_pairs: tuple[TracePair, ...],
+    *,
+    routes_per_speed: int,
+) -> tuple[TracePair, ...]:
+    """Freeze a deterministic, speed-stratified TRAIN calibration subset."""
+    if routes_per_speed <= 0:
+        raise ValueError("routes_per_speed must be positive.")
+    grouped: dict[int, list[TracePair]] = defaultdict(list)
+    for pair in train_pairs:
+        grouped[int(pair.speed_kmh)].append(pair)
+    selected: list[TracePair] = []
+    for speed in sorted(grouped):
+        selected.extend(
+            sorted(
+                grouped[speed],
+                key=lambda item: (str(item.trajectory_id), item.rsrp_file),
+            )[:routes_per_speed]
+        )
+    return tuple(selected)
+
+
+def fit_fixed_value_target_scale(
+    env: HandoverSMDPEnv,
+    *,
+    trace_records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Fit RMS discounted return-to-go under Always-HO-C1 on TRAIN."""
+    returns: list[float] = []
+    routes_used: list[str] = []
+    routes_without_decision: list[str] = []
+    env.transition_builder.reward_model.begin_rollout()
+    for trace_index, record in enumerate(trace_records):
+        trace_id = str(record["trace_id"])
+        try:
+            _, _ = env.reset(options={"trace_index": trace_index})
+        except RuntimeError:
+            routes_without_decision.append(trace_id)
+            continue
+        rewards: list[float] = []
+        discounts: list[float] = []
+        terminated = truncated = False
+        while not (terminated or truncated):
+            _, reward, terminated, truncated, info = env.step(
+                int(HandoverAction.HO_C1)
+            )
+            rewards.append(float(reward))
+            discounts.append(float(info["discount"]))
+        return_to_go = 0.0
+        episode_returns: list[float] = []
+        for reward, discount in zip(reversed(rewards), reversed(discounts)):
+            return_to_go = reward + discount * return_to_go
+            episode_returns.append(return_to_go)
+        returns.extend(reversed(episode_returns))
+        routes_used.append(trace_id)
+    if not returns:
+        raise RuntimeError("Value-scale calibration produced no macro returns.")
+    rms = math.sqrt(sum(value * value for value in returns) / len(returns))
+    scale = max(1.0, rms)
+    return {
+        "schema_name": "ppo_value_scale_calibration",
+        "schema_version": 1,
+        "split": "train",
+        "policy": "always_ho_c1",
+        "estimator": "max(1,sqrt(mean(discounted_return_to_go**2)))",
+        "value_target_scale": scale,
+        "return_count": len(returns),
+        "return_summary": {
+            "mean": sum(returns) / len(returns),
+            "rms": rms,
+            "min": min(returns),
+            "max": max(returns),
+        },
+        "routes_used": routes_used,
+        "routes_without_completed_a3": routes_without_decision,
+        "trace_records": trace_records,
+    }
 def write_dataset_manifest(
     output_dir: str,
     manifest: dict[str, Any],
@@ -375,12 +453,14 @@ def write_experiment_config(
     *,
     args: Namespace,
     train_env: HandoverSMDPEnv,
+    agent: SMDPPPO,
     ppo_config: SMDPPPOConfig,
     protocol_config: Any,
     manifest_paths: dict[str, Any],
     manifest: dict[str, Any],
     source_state: dict[str, Any],
     selected_speeds: list[int],
+    value_scale_calibration: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Write the immutable contract that identifies one ablation arm."""
     builder = train_env.transition_builder.observation_builder
@@ -466,14 +546,40 @@ def write_experiment_config(
             "grouping": "speed_kmh",
         },
         "discount_mode": train_env.objective_spec["discount_mode"],
-        "stay_mode": "reject_current_completed_a3_event",
+        "stay_mode": train_env.objective_spec["stay_mode"],
+        "stay_redecision_ms": train_env.objective_spec[
+            "stay_redecision_ms"
+        ],
         "model": {
-            "architecture": "shared_mlp_actor_critic",
+            "architecture": ppo_config.network_architecture,
             "hidden_sizes": list(ppo_config.hidden_sizes),
             "activation": ppo_config.activation,
             "observation_size": int(train_env.observation_space.shape[0]),
             "action_size": int(train_env.action_space.n),
+            "parameter_counts": {
+                "total": sum(
+                    parameter.numel()
+                    for parameter in agent.model.parameters()
+                ),
+                "actor": sum(
+                    parameter.numel()
+                    for name, parameter in agent.model.named_parameters()
+                    if name.startswith((
+                        "encoder.", "actor_encoder.", "policy_head.",
+                        "stay_encoder.", "candidate_encoder.",
+                        "stay_head.", "candidate_head.",
+                    ))
+                ),
+                "critic": sum(
+                    parameter.numel()
+                    for name, parameter in agent.model.named_parameters()
+                    if name.startswith(("encoder.", "critic_encoder.", "value_head."))
+                ),
+            },
+            "value_normalization": ppo_config.value_normalization,
+            "value_target_scale": ppo_config.value_target_scale,
         },
+        "value_scale_calibration": value_scale_calibration,
         "ppo": asdict(ppo_config),
         "seeds": {
             "training": args.seed,
@@ -703,8 +809,31 @@ def main(root_path: str, args: Namespace) -> int:
     protocol_config = load_protocol_config(data_dir)
     if any(not group for group in (splits.train, splits.validation, splits.test)):
         raise ValueError("Train, validation and test must each contain trajectories; provide more routes or adjust split fractions.")
+    if args.value_scale_calibration_routes_per_speed <= 0:
+        raise ValueError(
+            "--value-scale-calibration-routes-per-speed must be positive."
+        )
+    if args.value_normalization == "none" and args.value_target_scale is not None:
+        raise ValueError(
+            "--value-target-scale requires --value-normalization fixed_scale_v1."
+        )
+    if (
+        args.network_architecture == "candidate_scorer_v1"
+        and args.observation_schema != "qos_full_v1"
+    ):
+        raise ValueError(
+            "candidate_scorer_v1 requires --observation-schema qos_full_v1."
+        )
+    initial_value_scale = (
+        float(args.value_target_scale)
+        if args.value_target_scale is not None
+        else 1.0
+    )
     ppo_config = SMDPPPOConfig(
         hidden_sizes=tuple(args.hidden_sizes),
+        network_architecture=args.network_architecture,
+        value_normalization=args.value_normalization,
+        value_target_scale=initial_value_scale,
         learning_rate=args.learning_rate,
         rollout_steps=args.rollout_steps,
         batch_size=args.batch_size,
@@ -716,6 +845,7 @@ def main(root_path: str, args: Namespace) -> int:
         gamma_per_second=args.gamma_per_second,
         lambda_per_second=args.lambda_per_second,
         target_kl=args.target_kl,
+        learning_diagnostics=args.learning_diagnostics,
         seed=args.seed,
         device=args.device,
     )
@@ -735,6 +865,58 @@ def main(root_path: str, args: Namespace) -> int:
         )
     )
 
+    value_scale_calibration: dict[str, Any] | None = None
+    if args.value_normalization == "fixed_scale_v1":
+        if args.value_target_scale is None:
+            calibration_pairs = select_value_scale_calibration_pairs(
+                tuple(splits.train),
+                routes_per_speed=(
+                    args.value_scale_calibration_routes_per_speed
+                ),
+            )
+            trace_records = [
+                _manifest_record(data_dir, "train", pair)
+                for pair in calibration_pairs
+            ]
+            calibration_env = HandoverSMDPEnv(
+                protocol_config,
+                data_dir=data_dir,
+                trace_pairs=calibration_pairs,
+                gamma_per_second=ppo_config.gamma_per_second,
+                candidate_count=args.candidate_count,
+                candidate_order=args.candidate_order,
+                observation_schema=args.observation_schema,
+                reward_schema=args.reward_schema,
+                reward_config=reward_config,
+                stay_mode=args.stay_mode,
+                stay_redecision_ms=args.stay_redecision_ms,
+            )
+            value_scale_calibration = fit_fixed_value_target_scale(
+                calibration_env,
+                trace_records=trace_records,
+            )
+            value_scale_calibration["trace_records_sha256"] = (
+                _canonical_sha256(trace_records)
+            )
+            ppo_config = replace(
+                ppo_config,
+                value_target_scale=float(
+                    value_scale_calibration["value_target_scale"]
+                ),
+            )
+        else:
+            value_scale_calibration = {
+                "schema_name": "ppo_value_scale_calibration",
+                "schema_version": 1,
+                "split": "train",
+                "policy": None,
+                "estimator": "explicit_cli_value",
+                "value_target_scale": initial_value_scale,
+                "trace_records": [],
+                "trace_records_sha256": _canonical_sha256([]),
+            }
+        ppo_config.validate()
+
     train_env = HandoverSMDPEnv(
         protocol_config,
         data_dir=data_dir,
@@ -745,6 +927,8 @@ def main(root_path: str, args: Namespace) -> int:
         observation_schema=args.observation_schema,
         reward_schema=args.reward_schema,
         reward_config=reward_config,
+        stay_mode=args.stay_mode,
+        stay_redecision_ms=args.stay_redecision_ms,
     )
     validation_env = HandoverSMDPEnv(
         protocol_config,
@@ -756,6 +940,8 @@ def main(root_path: str, args: Namespace) -> int:
         observation_schema=args.observation_schema,
         reward_schema=args.reward_schema,
         reward_config=reward_config,
+        stay_mode=args.stay_mode,
+        stay_redecision_ms=args.stay_redecision_ms,
     )
     agent = SMDPPPO(
         train_env.observation_space.shape[0],
@@ -778,16 +964,34 @@ def main(root_path: str, args: Namespace) -> int:
     )
     manifest_paths = write_dataset_manifest(output_dir, manifest)
     source_state = capture_source_state(root_path, output_dir)
+    if value_scale_calibration is not None:
+        calibration_path = os.path.join(
+            output_dir, "value_scale_calibration.json"
+        )
+        with open(calibration_path, "w", encoding="utf-8") as calibration_file:
+            json.dump(
+                value_scale_calibration,
+                calibration_file,
+                indent=2,
+                allow_nan=False,
+            )
+        value_scale_calibration = {
+            **value_scale_calibration,
+            "file": os.path.basename(calibration_path),
+            "file_sha256": _sha256_file(calibration_path),
+        }
     experiment = write_experiment_config(
         output_dir,
         args=args,
         train_env=train_env,
+        agent=agent,
         ppo_config=ppo_config,
         protocol_config=protocol_config,
         manifest_paths=manifest_paths,
         manifest=manifest,
         source_state=source_state,
         selected_speeds=selected_speeds,
+        value_scale_calibration=value_scale_calibration,
     )
     print("Building validation 3GPP Always-HO QoS reference...", flush=True)
     validation_reference = build_3gpp_validation_reference(
@@ -968,6 +1172,8 @@ def main(root_path: str, args: Namespace) -> int:
             observation_schema=args.observation_schema,
             reward_schema=args.reward_schema,
             reward_config=reward_config,
+            stay_mode=args.stay_mode,
+            stay_redecision_ms=args.stay_redecision_ms,
         )
         test_env.load_reward_state(selected_reward_state)
         print("Running held-out test evaluation...", flush=True)

@@ -14,6 +14,7 @@ from ho_optim_drl.smdp import (
     MacroTransition,
     MacroTransitionBuilder,
     RewardBreakdown,
+    STAY_MODE_A3_REDECISION,
 )
 
 
@@ -21,16 +22,44 @@ def _build_runner(
     config: Config,
     *,
     gamma_per_second: float = 0.99,
+    stay_mode: str = "reject_event_v1",
+    stay_redecision_ticks: int = 10,
 ) -> MacroTransitionBuilder:
     return MacroTransitionBuilder(
         HandoverEngine(config),
         A3ObservationBuilder(config),
         HandoverRewardModel(config),
         gamma_per_second=gamma_per_second,
+        stay_mode=stay_mode,
+        stay_redecision_ticks=stay_redecision_ticks,
     )
 
 
 class MacroTransitionTests(unittest.TestCase):
+    def test_redecision_stay_creates_exact_100ms_macro_transition(self) -> None:
+        config = Config()
+        rsrp = np.vstack(
+            (
+                np.full(20, -80.0),
+                np.full(20, -77.0),
+            )
+        )
+        sinr = np.vstack((np.full(20, 10.0), np.full(20, 0.0)))
+        runner = _build_runner(
+            config,
+            stay_mode=STAY_MODE_A3_REDECISION,
+            stay_redecision_ticks=10,
+        )
+
+        runner.reset(RadioTrace.from_arrays(rsrp, sinr))
+        transition = runner.step(HandoverAction.STAY)
+
+        self.assertEqual(transition.duration_ticks, 10)
+        self.assertAlmostEqual(transition.duration_seconds, 0.1)
+        self.assertFalse(transition.terminated)
+        self.assertIsNotNone(transition.next_observation)
+        self.assertEqual(runner.engine.decision_point.tic, 14)
+
     def test_stay_advances_exactly_to_next_rearmed_a3_decision(self) -> None:
         config = Config()
         rsrp = np.vstack(

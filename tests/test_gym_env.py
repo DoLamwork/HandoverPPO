@@ -62,6 +62,31 @@ def _full_candidate_trace(trace_id: str, num_samples: int = 16) -> RadioTrace:
 
 
 class HandoverGymContractTests(unittest.TestCase):
+    def test_stay_redecision_is_checkpointed_and_validated(self) -> None:
+        trace = _decision_trace("redecision", num_samples=20)
+        redecision_env = HandoverSMDPEnv(
+            traces=[trace],
+            stay_mode="a3_redecision_v1",
+            stay_redecision_ms=100,
+        )
+        objective = redecision_env.objective_spec
+
+        self.assertEqual(objective["stay_mode"], "a3_redecision_v1")
+        self.assertEqual(objective["stay_redecision_ms"], 100)
+        legacy_env = HandoverSMDPEnv(traces=[trace])
+        with self.assertRaisesRegex(ValueError, "stay_mode"):
+            legacy_env.validate_checkpoint_objective(
+                {"objective": objective}
+            )
+
+    def test_stay_redecision_delay_must_align_to_radio_tick(self) -> None:
+        with self.assertRaisesRegex(ValueError, "multiple of delta_t_ms"):
+            HandoverSMDPEnv(
+                traces=[_decision_trace("invalid_redecision")],
+                stay_mode="a3_redecision_v1",
+                stay_redecision_ms=95,
+            )
+
     def test_checkpoint_objective_schema_mismatch_is_rejected(self) -> None:
         env = HandoverSMDPEnv(
             traces=[_decision_trace("schema", target_sinr_db=2.0)]
