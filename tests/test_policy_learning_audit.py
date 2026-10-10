@@ -13,6 +13,7 @@ from ho_optim_drl.commands.audit_policy_learning import (
     _D2_REWARDS,
     _average_precision,
     _route_folds,
+    _select_action_from_probabilities,
     build_state_bank,
     load_state_bank,
     simulate_reward_counterfactual,
@@ -36,6 +37,32 @@ def _pending_engine() -> HandoverEngine:
 
 
 class CounterfactualRewardAuditTests(unittest.TestCase):
+    def test_action_selection_decoders_expose_joint_hierarchical_disagreement(
+        self,
+    ) -> None:
+        probabilities = np.asarray([0.28, 0.2664, 0.2304, 0.2232])
+        self.assertEqual(
+            _select_action_from_probabilities(probabilities, "joint_argmax"),
+            0,
+        )
+        self.assertEqual(
+            _select_action_from_probabilities(
+                probabilities, "hierarchical_argmax"
+            ),
+            1,
+        )
+        first = _select_action_from_probabilities(
+            probabilities,
+            "stochastic_joint",
+            rng=np.random.default_rng(17),
+        )
+        second = _select_action_from_probabilities(
+            probabilities,
+            "stochastic_joint",
+            rng=np.random.default_rng(17),
+        )
+        self.assertEqual(first, second)
+
     def test_probe_metrics_and_route_split_are_deterministic(self) -> None:
         labels = np.asarray([0, 1, 0, 1], dtype=np.int64)
         scores = np.asarray([0.1, 0.9, 0.2, 0.8])

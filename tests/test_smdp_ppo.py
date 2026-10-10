@@ -286,6 +286,23 @@ class PPOIntegrationTests(unittest.TestCase):
         self.assertGreaterEqual(first.handover_fraction, 0.0)
         self.assertLessEqual(first.handover_fraction, 1.0)
 
+    def test_evaluation_action_selector_uses_existing_metrics_path(self) -> None:
+        agent = SMDPPPO(self.observation_size, len(HandoverAction), self.config)
+        calls = 0
+
+        def always_stay(observation, action_mask):
+            nonlocal calls
+            calls += 1
+            self.assertEqual(observation.shape, (self.observation_size,))
+            self.assertTrue(action_mask[HandoverAction.STAY])
+            return int(HandoverAction.STAY)
+
+        metrics = agent.evaluate(self.env, action_selector=always_stay)
+
+        self.assertGreater(calls, 0)
+        self.assertEqual(metrics.stay_fraction, 1.0)
+        self.assertEqual(metrics.handover_fraction, 0.0)
+
     def test_separate_validation_env_preserves_training_collector(self) -> None:
         agent = SMDPPPO(self.observation_size, len(HandoverAction), self.config)
         agent.collect_rollout(self.env, rollout_steps=1, reset_seed=11)
@@ -715,6 +732,151 @@ class PPOIntegrationTests(unittest.TestCase):
         self.assertEqual(restored.model.candidate_feature_size, 15)
         self.assertEqual(
             agent.predict(observation), restored.predict(observation)
+        )
+
+    def test_hierarchical_actor_initialization_and_mask_contract(self) -> None:
+        model = ActorCritic(
+            62,
+            4,
+            hidden_sizes=(16,),
+            architecture="hierarchical_candidate_scorer_v1",
+            candidate_feature_size=15,
+        )
+        observations = torch.zeros(3, 62)
+        masks = torch.tensor(
+            [
+                [True, True, True, True],
+                [True, True, False, True],
+                [True, False, False, False],
+            ]
+        )
+        distribution, _ = model.distribution_and_value(observations, masks)
+        torch.testing.assert_close(
+            distribution.probs[0], torch.full((4,), 0.25)
+        )
+        torch.testing.assert_close(
+            distribution.probs[1], torch.tensor([0.25, 0.375, 0.0, 0.375])
+        )
+        torch.testing.assert_close(
+            distribution.probs[2], torch.tensor([1.0, 0.0, 0.0, 0.0])
+        )
+
+    def test_hierarchical_stay_policy_gradient_does_not_reach_candidate_head(
+        self,
+    ) -> None:
+        model = ActorCritic(
+            62,
+            4,
+            hidden_sizes=(16,),
+            architecture="hierarchical_candidate_scorer_v1",
+            candidate_feature_size=15,
+        )
+        observations = torch.randn(8, 62)
+        distribution, _ = model.distribution_and_value(observations)
+        loss = -distribution.log_prob(torch.zeros(8, dtype=torch.long)).mean()
+        gradients = torch.autograd.grad(
+            loss,
+            tuple(model.parameters()),
+            allow_unused=True,
+        )
+        by_name = dict(zip((name for name, _ in model.named_parameters()), gradients))
+        candidate_norm = sum(
+            float(gradient.norm().item())
+            for name, gradient in by_name.items()
+            if name.startswith(("candidate_encoder.", "candidate_head."))
+            and gradient is not None
+        )
+        timing_norm = sum(
+            float(gradient.norm().item())
+            for name, gradient in by_name.items()
+            if name.startswith(("stay_encoder.", "timing_head."))
+            and gradient is not None
+        )
+        # Categorical re-normalizes an already normalized joint distribution;
+        # only floating-point residue may reach the conditional head.
+        self.assertLess(candidate_norm, 1e-6)
+        self.assertGreater(timing_norm, 0.0)
+
+    def test_hierarchical_handover_policy_gradient_reaches_both_heads(self) -> None:
+        model = ActorCritic(
+            62,
+            4,
+            hidden_sizes=(16,),
+            architecture="hierarchical_candidate_scorer_v1",
+            candidate_feature_size=15,
+        )
+        observations = torch.randn(8, 62)
+        distribution, _ = model.distribution_and_value(observations)
+        loss = -distribution.log_prob(torch.full((8,), 2, dtype=torch.long)).mean()
+        loss.backward()
+        timing_norm = sum(
+            float(parameter.grad.norm().item())
+            for name, parameter in model.named_parameters()
+            if name.startswith(("stay_encoder.", "timing_head."))
+            and parameter.grad is not None
+        )
+        candidate_norm = sum(
+            float(parameter.grad.norm().item())
+            for name, parameter in model.named_parameters()
+            if name.startswith(("candidate_encoder.", "candidate_head."))
+            and parameter.grad is not None
+        )
+        self.assertGreater(timing_norm, 0.0)
+        self.assertGreater(candidate_norm, 0.0)
+
+    def test_hierarchical_candidate_probabilities_are_permutation_equivariant(
+        self,
+    ) -> None:
+        model = ActorCritic(
+            62,
+            4,
+            hidden_sizes=(16,),
+            architecture="hierarchical_candidate_scorer_v1",
+            candidate_feature_size=15,
+        )
+        with torch.no_grad():
+            model.candidate_head.weight.normal_()
+        observation = torch.randn(5, 62)
+        permutation = torch.tensor([2, 0, 1])
+        permuted = torch.cat(
+            (
+                observation[:, :17],
+                observation[:, 17:].reshape(5, 3, 15)[:, permutation].reshape(5, 45),
+            ),
+            dim=1,
+        )
+        probabilities = model.distribution_and_value(observation)[0].probs
+        permuted_probabilities = model.distribution_and_value(permuted)[0].probs
+        torch.testing.assert_close(
+            permuted_probabilities[:, 0], probabilities[:, 0]
+        )
+        torch.testing.assert_close(
+            permuted_probabilities[:, 1:], probabilities[:, 1:][:, permutation]
+        )
+
+    def test_hierarchical_checkpoint_round_trip(self) -> None:
+        config = replace(
+            self.config,
+            network_architecture="hierarchical_candidate_scorer_v1",
+            candidate_feature_size=15,
+        )
+        agent = SMDPPPO(62, 4, config)
+        observation = np.zeros(62, dtype=np.float32)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "hierarchical_scorer.pt")
+            agent.save_checkpoint(path)
+            restored, _ = SMDPPPO.from_checkpoint(path)
+        self.assertEqual(
+            restored.model.architecture,
+            "hierarchical_candidate_scorer_v1",
+        )
+        np.testing.assert_allclose(
+            agent.model.act_with_probabilities(
+                observation, device=agent.device, deterministic=True
+            )[3],
+            restored.model.act_with_probabilities(
+                observation, device=restored.device, deterministic=True
+            )[3],
         )
 
     def test_learning_diagnostics_do_not_change_the_ppo_update(self) -> None:

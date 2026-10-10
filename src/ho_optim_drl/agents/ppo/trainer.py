@@ -29,6 +29,7 @@ TransitionDiagnosticCallback = Callable[
     [HandoverSMDPEnv, np.ndarray, np.ndarray, int, np.ndarray],
     dict[str, Any],
 ]
+EvaluationActionSelector = Callable[[np.ndarray, np.ndarray], int]
 
 
 @dataclass(frozen=True)
@@ -1230,6 +1231,7 @@ class SMDPPPO:
                 "stay_encoder": 0.0,
                 "candidate_encoder": 0.0,
                 "stay_head": 0.0,
+                "timing_head": 0.0,
                 "candidate_head": 0.0,
                 "value_head": 0.0,
             }
@@ -1305,6 +1307,7 @@ class SMDPPPO:
         *,
         deterministic: bool = True,
         max_episodes: int | None = None,
+        action_selector: EvaluationActionSelector | None = None,
     ) -> EvaluationMetrics:
         """Evaluate each trajectory at most once in stable index order."""
         if max_episodes is not None and max_episodes <= 0:
@@ -1368,11 +1371,20 @@ class SMDPPPO:
             rlf_recovery_penalty = 0.0
             episode_steps = 0
             while True:
-                action = self.predict(
-                    observation,
-                    deterministic=deterministic,
-                    action_mask=env.action_mask(),
+                action_mask = env.action_mask()
+                action = (
+                    self.predict(
+                        observation,
+                        deterministic=deterministic,
+                        action_mask=action_mask,
+                    )
+                    if action_selector is None
+                    else int(action_selector(observation, action_mask))
                 )
+                if not 0 <= action < self.model.action_size:
+                    raise ValueError("Evaluation action selector returned an invalid action.")
+                if not bool(action_mask[action]):
+                    raise ValueError("Evaluation action selector returned a masked action.")
                 (
                     observation,
                     reward,

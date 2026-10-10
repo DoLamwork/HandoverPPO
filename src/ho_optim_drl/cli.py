@@ -107,6 +107,7 @@ def run(argv=None) -> int:
             "counterfactual",
             "supervised-probe",
             "transition-probe",
+            "action-selection",
         ),
     )
     learning_audit_parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
@@ -168,7 +169,154 @@ def run(argv=None) -> int:
         "--transition-horizon", type=float, default=1.0
     )
     learning_audit_parser.add_argument(
+        "--stochastic-seeds", type=int, nargs="+", default=[17, 29, 43]
+    )
+    learning_audit_parser.add_argument(
+        "--selection-horizon", type=float, default=1.0
+    )
+    learning_audit_parser.add_argument(
         "--output-dir", default="results/analysis/p23_diagnostics/state_bank_pilot"
+    )
+    d63_parser = subparsers.add_parser(
+        "audit_timing_target",
+        help="Run the D63 TRAIN-only timing x target correctness pilot.",
+    )
+    d63_parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    d63_parser.add_argument(
+        "--d61-checkpoint",
+        required=True,
+        help="Frozen D61 selected checkpoint using a3_redecision_v1.",
+    )
+    d63_parser.add_argument(
+        "--d62-checkpoint",
+        required=True,
+        help="Frozen D62 selected checkpoint using a3_redecision_v1.",
+    )
+    d63_parser.add_argument(
+        "--speeds", type=int, nargs="+", default=[30, 50, 70, 90]
+    )
+    d63_parser.add_argument("--split-seed", type=int, default=17)
+    d63_parser.add_argument("--sample-seed", type=int, default=17)
+    d63_parser.add_argument("--routes-per-speed", type=int, default=5)
+    d63_parser.add_argument(
+        "--max-anchors-per-source-route", type=int, default=5
+    )
+    d63_parser.add_argument(
+        "--delays-ms", type=int, nargs="+", default=[0, 100, 200, 300]
+    )
+    d63_parser.add_argument(
+        "--horizons", type=float, nargs="+", default=[0.5, 1.0, 2.0]
+    )
+    d63_parser.add_argument("--gamma-per-second", type=float, default=0.99)
+    d63_parser.add_argument(
+        "--output-dir",
+        default="results/analysis/d63_timing_target_pilot_v1",
+    )
+    d63_main_parser = subparsers.add_parser(
+        "audit_timing_target_main",
+        help=(
+            "Analyze a completed 20-route/speed D63 TRAIN bank with route "
+            "bootstrap and finite-lookahead full-route references."
+        ),
+    )
+    d63_main_parser.add_argument("--local-audit-dir", required=True)
+    d63_main_parser.add_argument("--bootstrap-resamples", type=int, default=2000)
+    d63_main_parser.add_argument("--bootstrap-seed", type=int, default=29)
+    d63_main_parser.add_argument(
+        "--delays-ms", type=int, nargs="+", default=[0, 100, 200, 300]
+    )
+    d63_main_parser.add_argument("--reference-horizon", type=float, default=1.0)
+    d63_main_parser.add_argument(
+        "--output-dir",
+        default="results/analysis/d63_timing_target_main_analysis_v1",
+    )
+    d63_verify_parser = subparsers.add_parser(
+        "verify_d63_1",
+        help="Verify and freeze the completed TRAIN-only D63-1 package.",
+    )
+    d63_verify_parser.add_argument(
+        "--main-audit-dir",
+        default="results/analysis/d63_timing_target_main_analysis_v1",
+    )
+    d63_verify_parser.add_argument(
+        "--output-dir",
+        default="results/analysis/d63_1_verification_v1",
+    )
+    d63_verify_parser.add_argument(
+        "--test-command",
+        default=(
+            ".venv\\Scripts\\python.exe -m unittest "
+            "tests.test_d63_timing_target_audit tests.test_reference"
+        ),
+    )
+    d63_labels_parser = subparsers.add_parser(
+        "prepare_d63_2_labels",
+        help="Create leakage-safe TRAIN timing/target labels from D63-1.",
+    )
+    d63_labels_parser.add_argument(
+        "--bank-dir",
+        default="results/analysis/d63_timing_target_main_local_v1",
+    )
+    d63_labels_parser.add_argument(
+        "--main-audit-dir",
+        default="results/analysis/d63_timing_target_main_analysis_v1",
+    )
+    d63_labels_parser.add_argument("--route-split-seed", type=int, default=29)
+    d63_labels_parser.add_argument(
+        "--output-dir", default="results/analysis/d63_2_labels_v1"
+    )
+    d63_probe_parser = subparsers.add_parser(
+        "probe_d63_2",
+        help="Fit fixed linear and small-MLP probes on D63-2 TRAIN labels.",
+    )
+    d63_probe_parser.add_argument(
+        "--labels-dir", default="results/analysis/d63_2_labels_v1"
+    )
+    d63_probe_parser.add_argument("--seed", type=int, default=29)
+    d63_probe_parser.add_argument(
+        "--output-dir", default="results/analysis/d63_2_probe_v1"
+    )
+    d63_fp_parser = subparsers.add_parser(
+        "analyze_d63_2_false_positives",
+        help="Analyze frozen target-MLP false positives without refitting.",
+    )
+    d63_fp_parser.add_argument(
+        "--labels-dir", default="results/analysis/d63_2_labels_v1"
+    )
+    d63_fp_parser.add_argument(
+        "--probe-dir", default="results/analysis/d63_2_probe_v1"
+    )
+    d63_fp_parser.add_argument(
+        "--output-dir", default="results/analysis/d63_2_target_mlp_fp_v1"
+    )
+    d63_replay_parser = subparsers.add_parser(
+        "replay_d63_2_failure_cases",
+        help="Replay frozen target-MLP FP cases and audit radio/RLM dynamics.",
+    )
+    d63_replay_parser.add_argument(
+        "--bank-dir", default="results/analysis/d63_timing_target_main_local_v1"
+    )
+    d63_replay_parser.add_argument(
+        "--labels-dir", default="results/analysis/d63_2_labels_v1"
+    )
+    d63_replay_parser.add_argument(
+        "--probe-dir", default="results/analysis/d63_2_probe_v1"
+    )
+    d63_replay_parser.add_argument(
+        "--output-dir", default="results/analysis/d63_2_failure_case_replay_v1"
+    )
+    d63_feature_parser = subparsers.add_parser(
+        "validate_d63_3_feature",
+        help="Validate the frozen execution-safety feature on TRAIN fit/tuning.",
+    )
+    d63_feature_parser.add_argument(
+        "--bank-dir", default="results/analysis/d63_timing_target_main_local_v1"
+    )
+    d63_feature_parser.add_argument(
+        "--labels-dir", default="results/analysis/d63_2_labels_v1"
+    )
+    d63_feature_parser.add_argument(
+        "--output-dir", default="results/analysis/d63_3_execution_safety_v1"
     )
     summary_parser = subparsers.add_parser(
         "summarize_ablation",
@@ -296,9 +444,17 @@ def run(argv=None) -> int:
     train_parser.add_argument("--hidden-sizes", type=int, nargs="+", default=[64, 64])
     train_parser.add_argument(
         "--network-architecture",
-        choices=("shared_mlp_v1", "separate_mlp_v1", "candidate_scorer_v1"),
+        choices=(
+            "shared_mlp_v1",
+            "separate_mlp_v1",
+            "candidate_scorer_v1",
+            "hierarchical_candidate_scorer_v1",
+        ),
         default="shared_mlp_v1",
-        help="D3-A control: shared or separate actor/critic MLP encoders.",
+        help=(
+            "Actor architecture: flat MLP/scorer or D62 timing plus "
+            "conditional candidate heads."
+        ),
     )
     train_parser.add_argument(
         "--value-normalization",
@@ -515,13 +671,55 @@ def run(argv=None) -> int:
     if args.command == "audit_policy_learning":
         from ho_optim_drl.commands import audit_policy_learning
 
-        if args.mode in {"probe", "counterfactual", "supervised-probe"} and not args.bank_dir:
+        if args.mode in {
+            "probe",
+            "counterfactual",
+            "supervised-probe",
+            "action-selection",
+        } and not args.bank_dir:
             parser.error(f"audit_policy_learning {args.mode} requires --bank-dir")
         if args.mode == "supervised-probe" and not args.counterfactual_dir:
             parser.error(
                 "audit_policy_learning supervised-probe requires --counterfactual-dir"
             )
+        if args.mode == "action-selection" and len(args.checkpoint) != 1:
+            parser.error(
+                "audit_policy_learning action-selection requires exactly one "
+                "--checkpoint LABEL=PATH"
+            )
         return audit_policy_learning.main(root_path, args)
+    if args.command == "audit_timing_target":
+        from ho_optim_drl.commands import audit_timing_target
+
+        return audit_timing_target.main(root_path, args)
+    if args.command == "audit_timing_target_main":
+        from ho_optim_drl.commands import audit_timing_target_main
+
+        return audit_timing_target_main.main(root_path, args)
+    if args.command == "verify_d63_1":
+        from ho_optim_drl.commands import verify_d63_1
+
+        return verify_d63_1.main(root_path, args)
+    if args.command == "prepare_d63_2_labels":
+        from ho_optim_drl.commands import prepare_d63_2_labels
+
+        return prepare_d63_2_labels.main(root_path, args)
+    if args.command == "probe_d63_2":
+        from ho_optim_drl.commands import probe_d63_2
+
+        return probe_d63_2.main(root_path, args)
+    if args.command == "analyze_d63_2_false_positives":
+        from ho_optim_drl.commands import analyze_d63_2_false_positives
+
+        return analyze_d63_2_false_positives.main(root_path, args)
+    if args.command == "replay_d63_2_failure_cases":
+        from ho_optim_drl.commands import replay_d63_2_failure_cases
+
+        return replay_d63_2_failure_cases.main(root_path, args)
+    if args.command == "validate_d63_3_feature":
+        from ho_optim_drl.commands import validate_d63_3_feature
+
+        return validate_d63_3_feature.main(root_path, args)
     if args.command == "summarize_ablation":
         from ho_optim_drl.commands import summarize_ablation
 

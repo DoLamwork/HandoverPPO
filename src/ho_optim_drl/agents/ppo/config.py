@@ -39,6 +39,7 @@ class SMDPPPOConfig:
             "shared_mlp_v1",
             "separate_mlp_v1",
             "candidate_scorer_v1",
+            "hierarchical_candidate_scorer_v1",
         }:
             raise ValueError("Unsupported network_architecture.")
         if self.candidate_feature_size <= 0:

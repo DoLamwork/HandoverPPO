@@ -567,7 +567,7 @@ def write_experiment_config(
                     if name.startswith((
                         "encoder.", "actor_encoder.", "policy_head.",
                         "stay_encoder.", "candidate_encoder.",
-                        "stay_head.", "candidate_head.",
+                        "stay_head.", "timing_head.", "candidate_head.",
                     ))
                 ),
                 "critic": sum(
@@ -818,11 +818,15 @@ def main(root_path: str, args: Namespace) -> int:
             "--value-target-scale requires --value-normalization fixed_scale_v1."
         )
     if (
-        args.network_architecture == "candidate_scorer_v1"
+        args.network_architecture in {
+            "candidate_scorer_v1",
+            "hierarchical_candidate_scorer_v1",
+        }
         and args.observation_schema != "qos_full_v1"
     ):
         raise ValueError(
-            "candidate_scorer_v1 requires --observation-schema qos_full_v1."
+            "Candidate scorer architectures require "
+            "--observation-schema qos_full_v1."
         )
     initial_value_scale = (
         float(args.value_target_scale)

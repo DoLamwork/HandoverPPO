@@ -32,7 +32,7 @@ from ho_optim_drl.data import (
     load_radio_trace,
     stratified_trajectory_split,
 )
-from ho_optim_drl.data.project import load_protocol_config
+from ho_optim_drl.data.project import checkpoint_pairs, load_protocol_config
 from ho_optim_drl.envs import HandoverSMDPEnv
 from ho_optim_drl.protocol import HandoverEngine, ProtocolPhase
 from ho_optim_drl.smdp import (
@@ -41,8 +41,10 @@ from ho_optim_drl.smdp import (
     P3_E08_REWARD_SCHEMA,
     P3_E09_REWARD_SCHEMA,
     RewardBreakdown,
+    HandoverAction,
     TopologyCandidateObservationBuilder,
     build_reward_model,
+    reward_config_from_dict,
     trajectory_reward_config,
 )
 
@@ -516,15 +518,15 @@ def _forward_probe(
     current = tensor
     hidden = []
     with torch.no_grad():
-        if agent.model.architecture == "candidate_scorer_v1":
-            logits, values = agent.model(tensor)
-            logits = logits.masked_fill(
-                ~mask_tensor, torch.finfo(logits.dtype).min
+        if agent.model.architecture in {
+            "candidate_scorer_v1",
+            "hierarchical_candidate_scorer_v1",
+        }:
+            distribution, values = agent.model.distribution_and_value(
+                tensor, mask_tensor
             )
-            probabilities = torch.softmax(logits, dim=-1)
-            entropy = -(
-                probabilities * torch.log(probabilities.clamp_min(1e-12))
-            ).sum(-1)
+            probabilities = distribution.probs
+            entropy = distribution.entropy()
             valid = mask_tensor.sum(-1).float()
             normalized_entropy = torch.where(
                 valid > 1,
@@ -571,6 +573,363 @@ def _forward_probe(
         "argmax": np.argmax(probs, axis=1),
         "values": values.cpu().numpy(),
     }
+
+
+_ACTION_SELECTION_MODES = (
+    "joint_argmax",
+    "hierarchical_argmax",
+    "stochastic_joint",
+)
+
+
+def _select_action_from_probabilities(
+    probabilities: np.ndarray,
+    mode: str,
+    *,
+    rng: np.random.Generator | None = None,
+) -> int:
+    """Decode one masked flat distribution under an explicit audit rule."""
+    values = np.asarray(probabilities, dtype=np.float64)
+    if values.ndim != 1 or values.size < 2:
+        raise ValueError("Action probabilities must be a one-dimensional vector.")
+    if np.any(values < 0) or not np.isfinite(values).all():
+        raise ValueError("Action probabilities must be finite and non-negative.")
+    total = float(values.sum())
+    if total <= 0:
+        raise ValueError("Action probabilities must contain positive mass.")
+    values = values / total
+    if mode == "joint_argmax":
+        return int(np.argmax(values))
+    if mode == "hierarchical_argmax":
+        stay_probability = float(values[0])
+        handover_probability = float(values[1:].sum())
+        if handover_probability <= stay_probability:
+            return 0
+        return 1 + int(np.argmax(values[1:]))
+    if mode == "stochastic_joint":
+        if rng is None:
+            raise ValueError("stochastic_joint requires an explicit RNG.")
+        return int(rng.choice(values.size, p=values))
+    raise ValueError(f"Unknown action-selection mode: {mode!r}.")
+
+
+def _count_actions(actions: np.ndarray, action_size: int) -> dict[str, int]:
+    names = [action.name for action in list(HandoverAction)[:action_size]]
+    counts = np.bincount(actions.astype(np.int64), minlength=action_size)
+    return {name: int(counts[index]) for index, name in enumerate(names)}
+
+
+def _selection_summary(
+    probabilities: np.ndarray,
+    *,
+    stochastic_seeds: tuple[int, ...],
+) -> dict[str, Any]:
+    joint = np.argmax(probabilities, axis=1).astype(np.int64)
+    handover_probability = probabilities[:, 1:].sum(axis=1)
+    conditional = np.argmax(probabilities[:, 1:], axis=1).astype(np.int64) + 1
+    hierarchical = np.where(
+        handover_probability > probabilities[:, 0], conditional, 0
+    ).astype(np.int64)
+    stochastic = []
+    for seed in stochastic_seeds:
+        rng = np.random.default_rng(seed)
+        actions = np.asarray(
+            [
+                _select_action_from_probabilities(
+                    row, "stochastic_joint", rng=rng
+                )
+                for row in probabilities
+            ],
+            dtype=np.int64,
+        )
+        stochastic.append(
+            {"seed": seed, "action_counts": _count_actions(actions, probabilities.shape[1])}
+        )
+    return {
+        "states": int(len(probabilities)),
+        "mean_action_probability": probabilities.mean(axis=0).tolist(),
+        "handover_probability": _summary(handover_probability),
+        "handover_probability_above_half_fraction": float(
+            np.mean(handover_probability > 0.5)
+        ),
+        "joint_argmax_counts": _count_actions(joint, probabilities.shape[1]),
+        "hierarchical_argmax_counts": _count_actions(
+            hierarchical, probabilities.shape[1]
+        ),
+        "conditional_candidate_argmax_counts": _count_actions(
+            conditional, probabilities.shape[1]
+        ),
+        "joint_vs_hierarchical_disagreement_fraction": float(
+            np.mean(joint != hierarchical)
+        ),
+        "stochastic_joint": stochastic,
+    }
+
+
+def _useful_action_selection_summary(
+    *,
+    counterfactual_dir: str,
+    state_ids: np.ndarray,
+    probabilities: np.ndarray,
+    horizon_seconds: float,
+    expected_bank_sha256: str,
+    stochastic_seeds: tuple[int, ...],
+) -> dict[str, Any]:
+    root = Path(counterfactual_dir)
+    metadata = json.loads(
+        (root / "counterfactual_summary.json").read_text(encoding="utf-8")
+    )
+    if metadata.get("state_bank_sha256") != expected_bank_sha256:
+        raise ValueError("Counterfactual labels do not match the state bank.")
+    useful_by_state: dict[str, tuple[int, ...]] = {}
+    with (root / "counterfactual_rows.jsonl").open(encoding="utf-8") as source:
+        for line in source:
+            row = json.loads(line)
+            if np.isclose(float(row["horizon_seconds"]), horizon_seconds):
+                useful_by_state[str(row["state_id"])] = tuple(
+                    int(value)
+                    for value in row["useful_slots_vs_best_stay_c1"]
+                )
+    if len(useful_by_state) != len(state_ids):
+        raise ValueError("Counterfactual labels do not cover every state-bank row.")
+
+    useful = [useful_by_state[str(state_id)] for state_id in state_ids]
+    positive = np.asarray([bool(slots) for slots in useful], dtype=np.bool_)
+    joint = np.argmax(probabilities, axis=1).astype(np.int64)
+    handover_probability = probabilities[:, 1:].sum(axis=1)
+    conditional = np.argmax(probabilities[:, 1:], axis=1).astype(np.int64) + 1
+    hierarchical = np.where(
+        handover_probability > probabilities[:, 0], conditional, 0
+    ).astype(np.int64)
+
+    def recall(actions: np.ndarray) -> float | None:
+        if not positive.any():
+            return None
+        return float(
+            np.mean(
+                [
+                    int(actions[index]) in useful[index]
+                    for index in np.flatnonzero(positive)
+                ]
+            )
+        )
+
+    useful_mass = np.asarray(
+        [sum(probabilities[index, slot] for slot in slots) for index, slots in enumerate(useful)],
+        dtype=np.float64,
+    )
+    stochastic = []
+    for seed in stochastic_seeds:
+        rng = np.random.default_rng(seed)
+        actions = np.asarray(
+            [
+                _select_action_from_probabilities(
+                    row, "stochastic_joint", rng=rng
+                )
+                for row in probabilities
+            ],
+            dtype=np.int64,
+        )
+        stochastic.append({"seed": seed, "recall": recall(actions)})
+    return {
+        "horizon_seconds": horizon_seconds,
+        "positive_states": int(positive.sum()),
+        "mean_probability_on_useful_alternatives_given_positive_state": (
+            float(useful_mass[positive].mean()) if positive.any() else None
+        ),
+        "joint_argmax_recall": recall(joint),
+        "hierarchical_argmax_recall": recall(hierarchical),
+        "conditional_candidate_argmax_recall": recall(conditional),
+        "stochastic_joint_recall": stochastic,
+    }
+
+
+def _action_selection_environment(
+    *,
+    data_dir: str,
+    checkpoint_path: str,
+    agent: SMDPPPO,
+    extra: dict[str, Any],
+    speeds: list[int] | None,
+    split_seed: int,
+) -> tuple[HandoverSMDPEnv, tuple[TracePair, ...]]:
+    objective = dict(extra.get("objective") or {})
+    selected = checkpoint_pairs(
+        data_dir,
+        checkpoint_path,
+        extra,
+        split="validation",
+        speeds=speeds,
+        split_seed=split_seed,
+    )
+    reward_schema = str(objective.get("reward", LEGACY_REWARD_SCHEMA))
+    env = HandoverSMDPEnv(
+        load_protocol_config(data_dir, extra),
+        data_dir=data_dir,
+        trace_pairs=selected,
+        gamma_per_second=agent.config.gamma_per_second,
+        candidate_count=int(
+            objective.get("candidate_count", agent.model.action_size - 1)
+        ),
+        candidate_order=str(objective.get("candidate_order_key", "legacy")),
+        observation_schema=str(
+            objective.get("observation_schema_key", "legacy_v1")
+        ),
+        reward_schema=reward_schema,
+        reward_config=reward_config_from_dict(
+            reward_schema, objective.get("reward_config")
+        ),
+        stay_mode=str(objective.get("stay_mode", "reject_event_v1")),
+        stay_redecision_ms=int(objective.get("stay_redecision_ms", 100)),
+    )
+    env.load_reward_state(extra.get("reward_state"))
+    env.validate_checkpoint_objective(extra)
+    return env, selected
+
+
+def _validation_selection_run(
+    *,
+    agent: SMDPPPO,
+    env: HandoverSMDPEnv,
+    mode: str,
+    seed: int | None,
+) -> dict[str, Any]:
+    rng = np.random.default_rng(seed) if seed is not None else None
+    probabilities_seen: list[np.ndarray] = []
+    selected_actions: list[int] = []
+
+    def selector(observation: np.ndarray, action_mask: np.ndarray) -> int:
+        _, _, _, probabilities = agent.model.act_with_probabilities(
+            observation,
+            device=agent.device,
+            deterministic=True,
+            action_mask=action_mask,
+        )
+        action = _select_action_from_probabilities(probabilities, mode, rng=rng)
+        probabilities_seen.append(probabilities)
+        selected_actions.append(action)
+        return action
+
+    metrics = agent.evaluate(env, action_selector=selector)
+    probabilities = np.asarray(probabilities_seen, dtype=np.float64)
+    selection = _selection_summary(
+        probabilities,
+        stochastic_seeds=(),
+    )
+    selection["selected_action_counts"] = _count_actions(
+        np.asarray(selected_actions), agent.model.action_size
+    )
+    return {
+        "mode": mode,
+        "seed": seed,
+        "metrics": asdict(metrics),
+        "decision_diagnostics": selection,
+    }
+
+
+def audit_action_selection(
+    *,
+    data_dir: str,
+    bank_dir: str,
+    counterfactual_dir: str | None,
+    output_dir: str,
+    checkpoint_label: str,
+    checkpoint_path: str,
+    speeds: list[int] | None,
+    split_seed: int,
+    stochastic_seeds: tuple[int, ...],
+    horizon_seconds: float,
+) -> dict[str, Any]:
+    if not stochastic_seeds:
+        raise ValueError("At least one stochastic seed is required.")
+    manifest, arrays = load_state_bank(bank_dir)
+    agent, extra, spec = _policy_spec(checkpoint_path)
+    if agent.model.architecture != "hierarchical_candidate_scorer_v1":
+        raise ValueError("Action-selection audit requires a hierarchical checkpoint.")
+    observation_key = f"observation__{spec['observation_schema']}"
+    if observation_key not in arrays:
+        raise ValueError("State bank lacks the checkpoint observation schema.")
+    probe = _forward_probe(agent, arrays[observation_key], arrays["action_mask"])
+    state_bank = _selection_summary(
+        probe["probabilities"], stochastic_seeds=stochastic_seeds
+    )
+    if counterfactual_dir is not None:
+        state_bank["useful_alternatives"] = _useful_action_selection_summary(
+            counterfactual_dir=counterfactual_dir,
+            state_ids=arrays["state_id"],
+            probabilities=probe["probabilities"],
+            horizon_seconds=horizon_seconds,
+            expected_bank_sha256=manifest["npz_sha256"],
+            stochastic_seeds=stochastic_seeds,
+        )
+
+    validation_runs = []
+    for mode, seed in (
+        ("joint_argmax", None),
+        ("hierarchical_argmax", None),
+        *[("stochastic_joint", value) for value in stochastic_seeds],
+    ):
+        env, selected = _action_selection_environment(
+            data_dir=data_dir,
+            checkpoint_path=checkpoint_path,
+            agent=agent,
+            extra=extra,
+            speeds=speeds,
+            split_seed=split_seed,
+        )
+        validation_runs.append(
+            _validation_selection_run(
+                agent=agent, env=env, mode=mode, seed=seed
+            )
+        )
+
+    stochastic_metrics = [
+        run["metrics"]
+        for run in validation_runs
+        if run["mode"] == "stochastic_joint"
+    ]
+    aggregate_fields = (
+        "mean_return",
+        "mean_estimated_rate_mbps",
+        "mean_relative_rate_percent",
+        "rlf_time_percent",
+        "handover_failure_percent",
+        "ping_pong_percent",
+        "handover_fraction",
+        "stay_fraction",
+    )
+    stochastic_aggregate = {
+        name: {
+            "mean": float(np.mean([row[name] for row in stochastic_metrics])),
+            "std": float(np.std([row[name] for row in stochastic_metrics])),
+        }
+        for name in aggregate_fields
+    }
+    report = {
+        "schema_name": "ppo_action_selection_audit",
+        "schema_version": 1,
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "checkpoint_label": checkpoint_label,
+        "checkpoint": checkpoint_path,
+        "checkpoint_sha256": spec["checkpoint_sha256"],
+        "network_architecture": agent.model.architecture,
+        "split": "validation",
+        "split_seed": split_seed,
+        "trace_ids": [
+            f"{pair.speed_kmh}kmh_{pair.trajectory_id}" for pair in selected
+        ],
+        "test_or_zero_shot_rows_read": 0,
+        "state_bank": state_bank,
+        "validation_runs": validation_runs,
+        "stochastic_validation_aggregate": stochastic_aggregate,
+    }
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=False)
+    (destination / "action_selection_audit.json").write_text(
+        json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    return report
 
 
 def _probe_group(
@@ -1937,6 +2296,31 @@ def main(root_path: str, args: Namespace) -> int:
         print(
             f"Audited same-transition signals for {len(report['policies'])} "
             "policies on TRAIN."
+        )
+        return 0
+    if args.mode == "action-selection":
+        checkpoints = _parse_labelled_paths(root_path, args.checkpoint)
+        label, checkpoint = next(iter(checkpoints.items()))
+        report = audit_action_selection(
+            data_dir=_resolve(root_path, args.data_dir),
+            bank_dir=_resolve(root_path, args.bank_dir),
+            counterfactual_dir=(
+                None
+                if args.counterfactual_dir is None
+                else _resolve(root_path, args.counterfactual_dir)
+            ),
+            output_dir=_resolve(root_path, args.output_dir),
+            checkpoint_label=label,
+            checkpoint_path=checkpoint,
+            speeds=args.speeds,
+            split_seed=args.split_seed,
+            stochastic_seeds=tuple(args.stochastic_seeds),
+            horizon_seconds=args.selection_horizon,
+        )
+        print(
+            "Audited action selection on "
+            f"{report['state_bank']['states']} TRAIN-bank states and "
+            f"{len(report['trace_ids'])} validation trajectories."
         )
         return 0
     raise ValueError(f"Unknown audit mode: {args.mode!r}.")

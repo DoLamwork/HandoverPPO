@@ -35,6 +35,7 @@ class ActorCritic(nn.Module):
             "shared_mlp_v1",
             "separate_mlp_v1",
             "candidate_scorer_v1",
+            "hierarchical_candidate_scorer_v1",
         }:
             raise ValueError("Unsupported network architecture.")
         if not np.isfinite(value_target_scale) or value_target_scale < 1.0:
@@ -86,13 +87,25 @@ class ActorCritic(nn.Module):
                 self.global_feature_size + self.candidate_feature_size
             )
             self.critic_encoder = build_encoder(observation_size)
-            self.stay_head = nn.Linear(output_size, 1)
+            if architecture == "hierarchical_candidate_scorer_v1":
+                self.timing_head = nn.Linear(output_size, 2)
+            else:
+                self.stay_head = nn.Linear(output_size, 1)
             self.candidate_head = nn.Linear(output_size, 1)
         self.value_head = nn.Linear(output_size, 1)
         # Exact equal logits make the initial valid-action distribution uniform.
         if architecture == "candidate_scorer_v1":
             nn.init.zeros_(self.stay_head.weight)
             nn.init.zeros_(self.stay_head.bias)
+            nn.init.zeros_(self.candidate_head.weight)
+            nn.init.zeros_(self.candidate_head.bias)
+        elif architecture == "hierarchical_candidate_scorer_v1":
+            nn.init.zeros_(self.timing_head.weight)
+            nn.init.zeros_(self.timing_head.bias)
+            # P(STAY)=1/action_size and P(HO)=candidate_count/action_size,
+            # so uniform P(C_i | HO) gives the same flat initialization as D61.
+            with torch.no_grad():
+                self.timing_head.bias[1] = np.log(action_size - 1)
             nn.init.zeros_(self.candidate_head.weight)
             nn.init.zeros_(self.candidate_head.bias)
         else:
@@ -127,8 +140,24 @@ class ActorCritic(nn.Module):
             )
             candidate_features = self.candidate_encoder(candidate_inputs)
             candidate_logits = self.candidate_head(candidate_features).squeeze(-1)
-            stay_logits = self.stay_head(self.stay_encoder(context))
-            logits = torch.cat((stay_logits, candidate_logits), dim=-1)
+            timing_features = self.stay_encoder(context)
+            if self.architecture == "hierarchical_candidate_scorer_v1":
+                timing_logits = self.timing_head(timing_features)
+                timing_probabilities = torch.softmax(timing_logits, dim=-1)
+                candidate_probabilities = torch.softmax(candidate_logits, dim=-1)
+                probabilities = torch.cat(
+                    (
+                        timing_probabilities[:, :1],
+                        timing_probabilities[:, 1:] * candidate_probabilities,
+                    ),
+                    dim=-1,
+                )
+                logits = torch.log(
+                    probabilities.clamp_min(torch.finfo(probabilities.dtype).tiny)
+                )
+            else:
+                stay_logits = self.stay_head(timing_features)
+                logits = torch.cat((stay_logits, candidate_logits), dim=-1)
             critic_features = self.critic_encoder(observations)
         normalized_value = self.value_head(critic_features).squeeze(-1)
         return (
@@ -149,6 +178,10 @@ class ActorCritic(nn.Module):
         observations: torch.Tensor,
         action_masks: torch.Tensor | None = None,
     ) -> tuple[Categorical, torch.Tensor]:
+        if self.architecture == "hierarchical_candidate_scorer_v1":
+            return self._hierarchical_distribution_and_value(
+                observations, action_masks
+            )
         logits, values = self(observations)
         if action_masks is not None:
             action_masks = action_masks.to(device=logits.device, dtype=torch.bool)
@@ -161,6 +194,77 @@ class ActorCritic(nn.Module):
                 torch.finfo(logits.dtype).min,
             )
         return Categorical(logits=logits), values
+
+    def _hierarchical_distribution_and_value(
+        self,
+        observations: torch.Tensor,
+        action_masks: torch.Tensor | None,
+    ) -> tuple[Categorical, torch.Tensor]:
+        """Build the flat PPO distribution from timing and conditional heads."""
+        context = observations[:, : self.global_feature_size]
+        candidate_blocks = observations[:, self.global_feature_size :].reshape(
+            observations.shape[0],
+            self.action_size - 1,
+            self.candidate_feature_size,
+        )
+        candidate_inputs = torch.cat(
+            (
+                context.unsqueeze(1).expand(-1, self.action_size - 1, -1),
+                candidate_blocks,
+            ),
+            dim=-1,
+        )
+        timing_logits = self.timing_head(self.stay_encoder(context))
+        candidate_logits = self.candidate_head(
+            self.candidate_encoder(candidate_inputs)
+        ).squeeze(-1)
+
+        if action_masks is None:
+            masks = torch.ones(
+                observations.shape[0],
+                self.action_size,
+                dtype=torch.bool,
+                device=observations.device,
+            )
+        else:
+            masks = action_masks.to(device=observations.device, dtype=torch.bool)
+            if masks.shape != (observations.shape[0], self.action_size):
+                raise ValueError("Action masks must match the policy logits.")
+            if not torch.all(masks.any(dim=-1)):
+                raise ValueError("Each action mask must allow at least one action.")
+
+        candidate_masks = masks[:, 1:]
+        has_candidate = candidate_masks.any(dim=-1)
+        timing_masks = torch.stack((masks[:, 0], has_candidate), dim=-1)
+        masked_timing_logits = timing_logits.masked_fill(
+            ~timing_masks, torch.finfo(timing_logits.dtype).min
+        )
+        timing_probabilities = torch.softmax(masked_timing_logits, dim=-1)
+
+        # Avoid an all-masked softmax for rows where only STAY is legal.
+        safe_candidate_masks = torch.where(
+            has_candidate.unsqueeze(-1),
+            candidate_masks,
+            torch.ones_like(candidate_masks),
+        )
+        masked_candidate_logits = candidate_logits.masked_fill(
+            ~safe_candidate_masks, torch.finfo(candidate_logits.dtype).min
+        )
+        candidate_probabilities = torch.softmax(masked_candidate_logits, dim=-1)
+        candidate_probabilities = candidate_probabilities * has_candidate.unsqueeze(-1)
+        probabilities = torch.cat(
+            (
+                timing_probabilities[:, :1],
+                timing_probabilities[:, 1:] * candidate_probabilities,
+            ),
+            dim=-1,
+        )
+        critic_features = self.critic_encoder(observations)
+        values = (
+            self.value_head(critic_features).squeeze(-1)
+            * self.value_target_scale
+        )
+        return Categorical(probs=probabilities), values
 
     @torch.no_grad()
     def act(
