@@ -6,7 +6,7 @@ import math
 import numpy as np
 
 from ho_optim_drl.data import RadioTrace
-from ho_optim_drl.protocol import HandoverEngine
+from ho_optim_drl.protocol import EarlyTimingHandoverEngine, HandoverEngine
 
 from .actions import HandoverAction
 from .multicandidate import TopologyCandidateObservationBuilder
@@ -248,13 +248,21 @@ class MacroTransitionBuilder:
 
     def _apply_action(self, action: HandoverAction) -> None:
         if action is HandoverAction.STAY:
-            self.engine.stay(
-                redecision_delay_ticks=(
-                    self.stay_redecision_ticks
-                    if self.stay_mode == STAY_MODE_A3_REDECISION
-                    else None
+            if (
+                self.stay_mode == STAY_MODE_A3_REDECISION
+                and isinstance(self.engine, EarlyTimingHandoverEngine)
+            ):
+                self.engine.wait_for_redecision(
+                    delay_ticks=self.stay_redecision_ticks
                 )
-            )
+            else:
+                self.engine.stay(
+                    redecision_delay_ticks=(
+                        self.stay_redecision_ticks
+                        if self.stay_mode == STAY_MODE_A3_REDECISION
+                        else None
+                    )
+                )
         elif action.is_handover:
             if not isinstance(
                 self.observation_builder,

@@ -16,6 +16,10 @@ COMMANDS = {
     "plot-antenna": ("visualization.plot_antenna_pattern", "Export 3D antenna patterns"),
     "plot-system": ("visualization.plot_system_model", "Export the system-model figure"),
     "validate": ("validation.channel_statistics", "Validate channel statistics"),
+    "audit-rsrp-factors": (
+        "validation.rsrp_factor_audit",
+        "Replay a manifested P0 dataset and rank RSRP variation factors",
+    ),
 }
 
 

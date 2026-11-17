@@ -1,0 +1,10 @@
+# Repository-scoped Codex configuration. Specialist profiles in .codex/agents/
+# inherit model, approval, sandbox, and tool defaults from the invoking session,
+# avoiding overrides of user or organization policy.
+
+[research_environment]
+topic = "PPO-based UAV handover optimization in 5G/6G networks with ISAC"
+guidance_file = "AGENTS.md"
+agent_profiles_dir = ".codex/agents"
+preserve_existing_results = true
+simulation_source_modifications_require_explicit_request = true

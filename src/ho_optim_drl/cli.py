@@ -41,6 +41,336 @@ def run(argv=None) -> int:
         help="Optional speed(s) in km/h to validate; defaults to every discovered speed.",
     )
     validate_parser.add_argument("--output-dir", default="results/3gpp/uav_generated")
+    parity_parser = subparsers.add_parser(
+        "audit_baseline_parity",
+        help="Check TRAIN-only B0 reference parity with the B0A action adapter.",
+    )
+    parity_parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    parity_parser.add_argument(
+        "--speeds", type=int, nargs="+", default=[30, 50, 70, 90]
+    )
+    parity_parser.add_argument("--split-seed", type=int, default=17)
+    parity_parser.add_argument("--sample-seed", type=int, default=17)
+    parity_parser.add_argument("--routes-per-speed", type=int, default=2)
+    parity_parser.add_argument(
+        "--output-dir",
+        default="results/analysis/early_ho_timing/b0_b0a_pilot_v2",
+    )
+    b1_parser = subparsers.add_parser(
+        "audit_b1_lower_threshold",
+        help="Run the TRAIN-only B1 lower-A3-offset paired pilot.",
+    )
+    b1_parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    b1_parser.add_argument(
+        "--baseline-manifest",
+        default="results/analysis/early_ho_timing/b0_b0a_pilot_v2/run_manifest.json",
+    )
+    b1_parser.add_argument(
+        "--output-dir",
+        default="results/analysis/early_ho_timing/b1_lower_threshold_pilot_v2",
+    )
+    b23_parser = subparsers.add_parser(
+        "audit_b2_b3_early_controls",
+        help="Run paired TRAIN-only B2 immediate and B3 delayed early-HO controls.",
+    )
+    b23_parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    b23_parser.add_argument(
+        "--baseline-manifest",
+        default="results/analysis/early_ho_timing/b0_b0a_pilot_v2/run_manifest.json",
+    )
+    b23_parser.add_argument(
+        "--output-dir",
+        default="results/analysis/early_ho_timing/b2_b3_controls_pilot_v1",
+    )
+    timing_reference_parser = subparsers.add_parser(
+        "audit_early_timing_references",
+        help="Run TRAIN-only shadow-A3 Rpost/Rearly correctness and cost pilot.",
+    )
+    timing_reference_parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    timing_reference_parser.add_argument(
+        "--baseline-manifest",
+        default="results/analysis/early_ho_timing/b0_b0a_pilot_v2/run_manifest.json",
+    )
+    timing_reference_parser.add_argument(
+        "--delays-ms", type=int, nargs="+", default=[0, 20, 40, 80, 160, 320]
+    )
+    timing_reference_parser.add_argument("--reference-horizon", type=float, default=1.0)
+    timing_reference_parser.add_argument(
+        "--output-dir",
+        default="results/analysis/early_ho_timing/rpost_rearly_pilot_v1",
+    )
+    t2_parser = subparsers.add_parser(
+        "audit_early_timing_bank",
+        help="Build the T2 TRAIN anchor bank and local timing counterfactuals.",
+    )
+    t2_parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    t2_parser.add_argument("--speeds", type=int, nargs="+", default=[30, 50, 70, 90])
+    t2_parser.add_argument("--split-seed", type=int, default=17)
+    t2_parser.add_argument("--sample-seed", type=int, default=17)
+    t2_parser.add_argument("--routes-per-speed", type=int, default=20)
+    t2_parser.add_argument("--max-anchors-per-source-route", type=int, default=5)
+    t2_parser.add_argument("--delays-ms", type=int, nargs="+", default=[0, 20, 40, 80, 160, 320])
+    t2_parser.add_argument("--horizons", type=float, nargs="+", default=[0.5, 1.0, 2.0])
+    t2_parser.add_argument(
+        "--output-dir", default="results/analysis/early_ho_timing/t2_bank_main_v1"
+    )
+    t3_parser = subparsers.add_parser(
+        "audit_early_timing_routes",
+        help="Run T3 seven-policy TRAIN full-route audit and paired bootstrap.",
+    )
+    t3_parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    t3_parser.add_argument(
+        "--route-split",
+        default="results/analysis/early_ho_timing/t2_bank_main_v1/route_split.json",
+    )
+    t3_parser.add_argument("--delays-ms", type=int, nargs="+", default=[0, 20, 40, 80, 160, 320])
+    t3_parser.add_argument("--reference-horizon", type=float, default=1.0)
+    t3_parser.add_argument("--bootstrap-resamples", type=int, default=2000)
+    t3_parser.add_argument("--bootstrap-seed", type=int, default=29)
+    t3_parser.add_argument(
+        "--output-dir", default="results/analysis/early_ho_timing/t3_route_main_v1"
+    )
+    t5a_source_parser = subparsers.add_parser(
+        "audit_t5a_benefit_sources",
+        help=(
+            "Audit realised T5A benefit sources and compare TRAIN-only "
+            "pre-A3 versus post-TTT counterfactual opportunity."
+        ),
+    )
+    t5a_source_parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    t5a_source_parser.add_argument(
+        "--route-split",
+        default="results/analysis/early_ho_timing/t2_bank_main_v1/route_split.json",
+    )
+    t5a_source_parser.add_argument(
+        "--t2-dir",
+        default="results/analysis/early_ho_timing/t2_bank_main_v1",
+    )
+    t5a_source_parser.add_argument(
+        "--t3-dir",
+        default="results/analysis/early_ho_timing/t3_route_main_v1",
+    )
+    t5a_source_parser.add_argument(
+        "--checkpoints",
+        nargs="+",
+        default=[
+            "results/models/early_ho_timing/"
+            "T5A_timing_ppo_fixed_scale_b100000_s17/smdp_ppo_selected.pt",
+            "results/models/early_ho_timing/"
+            "T5A_timing_ppo_fixed_scale_b100000_s29/smdp_ppo_selected.pt",
+            "results/models/early_ho_timing/"
+            "T5A_timing_ppo_fixed_scale_b100000_s43/smdp_ppo_selected.pt",
+        ],
+    )
+    t5a_source_parser.add_argument("--horizon", type=float, default=1.0)
+    t5a_source_parser.add_argument("--bootstrap-resamples", type=int, default=2000)
+    t5a_source_parser.add_argument("--bootstrap-seed", type=int, default=71)
+    t5a_source_parser.add_argument(
+        "--max-routes-per-speed",
+        type=int,
+        help="Optional correctness-pilot cap; omit for the frozen 80-route audit.",
+    )
+    t5a_source_parser.add_argument(
+        "--output-dir",
+        default="results/analysis/early_ho_timing/t5a_benefit_source_main_v1",
+    )
+    t6a_divergence_parser = subparsers.add_parser(
+        "audit_t6a_seed_divergence",
+        help=(
+            "Compare T6A seed 17 and 29 on a shared TRAIN state union and "
+            "their recorded PPO learning signals."
+        ),
+    )
+    t6a_divergence_parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    t6a_divergence_parser.add_argument(
+        "--route-split",
+        default="results/analysis/early_ho_timing/t2_bank_main_v1/route_split.json",
+    )
+    t6a_divergence_parser.add_argument(
+        "--seed17-checkpoint",
+        default=(
+            "results/models/early_ho_timing/"
+            "T6A_a3_entry_timing_b100000_s17/smdp_ppo_selected.pt"
+        ),
+    )
+    t6a_divergence_parser.add_argument(
+        "--seed29-checkpoint",
+        default=(
+            "results/models/early_ho_timing/"
+            "T6A_a3_entry_timing_b100000_s29/smdp_ppo_selected.pt"
+        ),
+    )
+    t6a_divergence_parser.add_argument(
+        "--seed17-metrics",
+        default=(
+            "results/models/early_ho_timing/"
+            "T6A_a3_entry_timing_b100000_s17/training_metrics.jsonl"
+        ),
+    )
+    t6a_divergence_parser.add_argument(
+        "--seed29-metrics",
+        default=(
+            "results/models/early_ho_timing/"
+            "T6A_a3_entry_timing_b100000_s29/training_metrics.jsonl"
+        ),
+    )
+    t6a_divergence_parser.add_argument("--bootstrap-resamples", type=int, default=2000)
+    t6a_divergence_parser.add_argument("--bootstrap-seed", type=int, default=83)
+    t6a_divergence_parser.add_argument(
+        "--max-routes-per-speed",
+        type=int,
+        help="Optional correctness-pilot cap; omit for the locked 80-route audit.",
+    )
+    t6a_divergence_parser.add_argument(
+        "--output-dir",
+        default="results/analysis/early_ho_timing/t6a_seed17_vs_seed29_v1",
+    )
+    verify_t23_parser = subparsers.add_parser(
+        "verify_early_timing_t2_t3",
+        help="Verify archived T2/T3 TRAIN artifacts and recompute the corrected QoS gate.",
+    )
+    verify_t23_parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    verify_t23_parser.add_argument(
+        "--t2-dir", default="results/analysis/early_ho_timing/t2_bank_main_v1"
+    )
+    verify_t23_parser.add_argument(
+        "--t3-dir", default="results/analysis/early_ho_timing/t3_route_main_v1"
+    )
+    verify_t23_parser.add_argument(
+        "--output-dir",
+        default="results/analysis/early_ho_timing/t2_t3_verification_v1",
+    )
+    verify_t23_parser.add_argument(
+        "--skip-anchor-replay", action="store_true",
+        help="Skip deterministic T2 anchor replay (bookkeeping checks still run).",
+    )
+    t4_parser = subparsers.add_parser(
+        "audit_early_timing_learnability",
+        help="Run T4 post-A3 causal HO_NOW/WAIT_20 learnability audit.",
+    )
+    t4_parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    t4_parser.add_argument("--t2-dir", default="results/analysis/early_ho_timing/t2_bank_main_v1")
+    t4_parser.add_argument("--t3-dir", default="results/analysis/early_ho_timing/t3_route_main_v1")
+    t4_parser.add_argument("--route-split-seed", type=int, default=29)
+    t4_parser.add_argument("--model-seed", type=int, default=29)
+    t4_parser.add_argument("--output-dir", default="results/analysis/early_ho_timing/t4_learnability_v1")
+    t4_parser.add_argument("--feature-schema", choices=["t4a_causal_v1", "t4b_protocol_history_v1"], default="t4a_causal_v1")
+    t4_parser.add_argument("--control-report", default=None)
+    t4b_parser = subparsers.add_parser(
+        "audit_early_timing_observation_ablation",
+        help="Run T4B post-A3 protocol/history observation ablation against T4A.",
+    )
+    t4b_parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    t4b_parser.add_argument("--t2-dir", default="results/analysis/early_ho_timing/t2_bank_main_v1")
+    t4b_parser.add_argument("--t3-dir", default="results/analysis/early_ho_timing/t3_route_main_v1")
+    t4b_parser.add_argument("--route-split-seed", type=int, default=29)
+    t4b_parser.add_argument("--model-seed", type=int, default=29)
+    t4b_parser.add_argument("--feature-schema", default="t4b_protocol_history_v1")
+    t4b_parser.add_argument("--control-report", default="results/analysis/early_ho_timing/t4_learnability_v3/t4_report.json")
+    t4b_parser.add_argument("--output-dir", default="results/analysis/early_ho_timing/t4b_observation_v1")
+    t4b_error_parser = subparsers.add_parser(
+        "analyze_t4b_errors",
+        help="Audit frozen T4B false-positive/false-negative decisions without refit.",
+    )
+    t4b_error_parser.add_argument("--t4b-dir", default="results/analysis/early_ho_timing/t4b_observation_v1")
+    t4b_error_parser.add_argument("--seed", type=int, default=29)
+    t4b_error_parser.add_argument("--output-dir", default="results/analysis/early_ho_timing/t4b_error_audit_v1")
+    post_ttt_parser = subparsers.add_parser(
+        "build_post_ttt_train_bank",
+        help="Build a post-TTT-only bank from previously unused TRAIN routes.",
+    )
+    post_ttt_parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    post_ttt_parser.add_argument("--speeds", type=int, nargs="+", default=[30, 50, 70, 90])
+    post_ttt_parser.add_argument("--split-seed", type=int, default=17)
+    post_ttt_parser.add_argument("--route-seed", type=int, default=43)
+    post_ttt_parser.add_argument("--sample-seed", type=int, default=17)
+    post_ttt_parser.add_argument(
+        "--exclude-route-split", action="append",
+        default=["results/analysis/early_ho_timing/t2_bank_main_v1/route_split.json"],
+    )
+    post_ttt_parser.add_argument("--fit-routes-per-speed", type=int, default=40)
+    post_ttt_parser.add_argument("--tuning-routes-per-speed", type=int, default=10)
+    post_ttt_parser.add_argument("--confirmation-routes-per-speed", type=int, default=10)
+    post_ttt_parser.add_argument(
+        "--split-only", action="store_true",
+        help="Freeze only an outcome-blind confirmation route split; do not simulate anchors/outcomes.",
+    )
+    post_ttt_parser.add_argument("--max-anchors-per-source-route", type=int, default=5)
+    post_ttt_parser.add_argument("--min-anchor-separation-ms", type=int, default=500)
+    post_ttt_parser.add_argument("--delays-ms", type=int, nargs="+", default=[0, 20, 40, 80, 160, 320])
+    post_ttt_parser.add_argument("--horizons", type=float, nargs="+", default=[0.5, 1.0, 2.0])
+    post_ttt_parser.add_argument(
+        "--output-dir",
+        default="results/analysis/early_ho_timing/post_ttt_train_bank_v1",
+    )
+    t4c_parser = subparsers.add_parser(
+        "audit_t4c_post_ttt_probe",
+        help="Fit/tune/freeze and confirm T4C on the expanded post-TTT TRAIN bank.",
+    )
+    t4c_parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    t4c_parser.add_argument(
+        "--bank-dir",
+        default="results/analysis/early_ho_timing/post_ttt_train_bank_v1",
+    )
+    t4c_parser.add_argument("--model-seed", type=int, default=29)
+    t4c_parser.add_argument(
+        "--t4b-report",
+        default="results/analysis/early_ho_timing/t4b_observation_v1/t4_report.json",
+    )
+    t4c_parser.add_argument(
+        "--output-dir",
+        default="results/analysis/early_ho_timing/t4c_probe_v1",
+    )
+    t4d_parser = subparsers.add_parser(
+        "audit_t4d_compact_causal_probe",
+        help="Fit separate compact causal QoS/risk heads on frozen T4C TRAIN samples.",
+    )
+    t4d_parser.add_argument(
+        "--t4c-dir",
+        default="results/analysis/early_ho_timing/t4c_probe_v1",
+    )
+    t4d_parser.add_argument("--model-seed", type=int, default=29)
+    t4d_parser.add_argument(
+        "--minimum-meaningful-gain-mbit", type=float, default=0.05,
+    )
+    t4d_parser.add_argument(
+        "--output-dir",
+        default="results/analysis/early_ho_timing/t4d_compact_probe_v1",
+    )
+    t4d1_parser = subparsers.add_parser(
+        "audit_t4d1_ranked_probe",
+        help="Run T4D.1 material-gain ranking with calibrated risk on frozen TRAIN states.",
+    )
+    t4d1_parser.add_argument(
+        "--t4c-dir",
+        default="results/analysis/early_ho_timing/t4c_probe_v1",
+    )
+    t4d1_parser.add_argument(
+        "--t4d-report",
+        default="results/analysis/early_ho_timing/t4d_compact_probe_v1/t4d_report.json",
+    )
+    t4d1_parser.add_argument("--model-seed", type=int, default=29)
+    t4d1_parser.add_argument("--minimum-gain-mbit", type=float, default=0.05)
+    t4d1_parser.add_argument("--minimum-tuning-wait-actions", type=int, default=10)
+    t4d1_parser.add_argument(
+        "--output-dir",
+        default="results/analysis/early_ho_timing/t4d1_ranked_probe_v1",
+    )
+    sinr_full_parser = subparsers.add_parser(
+        "audit_sinr_rule_fullroute",
+        help="Audit the target-SINR-worse rule on 40 post-TTT TRAIN confirmation routes.",
+    )
+    sinr_full_parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
+    sinr_full_parser.add_argument(
+        "--route-split",
+        default="results/analysis/early_ho_timing/post_ttt_train_bank_v1/route_split.json",
+    )
+    sinr_full_parser.add_argument("--bootstrap-resamples", type=int, default=2000)
+    sinr_full_parser.add_argument("--bootstrap-seed", type=int, default=43)
+    sinr_full_parser.add_argument(
+        "--output-dir",
+        default="results/analysis/early_ho_timing/sinr_rule_fullroute_confirmation_v2",
+    )
     audit_parser = subparsers.add_parser(
         "audit_candidates",
         help="Run the P1 train-only counterfactual candidate audit.",
@@ -373,7 +703,7 @@ def run(argv=None) -> int:
     train_parser.add_argument(
         "--candidate-count",
         type=int,
-        choices=(3, 5, 10),
+        choices=(1, 3, 5, 10),
         default=10,
         help="Number K of frozen handover candidates exposed to PPO.",
     )
@@ -393,6 +723,7 @@ def run(argv=None) -> int:
             "rolling_v1",
             "monotonic_v1",
             "qos_full_v1",
+            "t4d1_compact_v1",
         ),
         default="legacy_v1",
         help=(
@@ -425,10 +756,39 @@ def run(argv=None) -> int:
         ),
     )
     train_parser.add_argument(
+        "--decision-trigger",
+        choices=("completed_a3_ttt", "a3_entry_redecision_v1"),
+        default="completed_a3_ttt",
+        help=(
+            "completed_a3_ttt preserves the legacy/T5A trigger; "
+            "a3_entry_redecision_v1 exposes STAY/HO_C1 immediately when "
+            "the standard A3 entering inequality first becomes true while "
+            "retaining the 40 ms TTT as an observational shadow."
+        ),
+    )
+    train_parser.add_argument(
         "--stay-redecision-ms",
         type=int,
         default=100,
         help="Delay before re-offering a still-valid A3 event in redecision mode.",
+    )
+    train_parser.add_argument(
+        "--a3-offset-db",
+        type=float,
+        default=None,
+        help=(
+            "Optional A3 offset used by the PPO environment. The dataset/default "
+            "value is retained when omitted."
+        ),
+    )
+    train_parser.add_argument(
+        "--reference-a3-offset-db",
+        type=float,
+        default=None,
+        help=(
+            "Optional A3 offset used only by the 3GPP Always-HO validation "
+            "reference. Omit to use the PPO environment offset."
+        ),
     )
     train_parser.add_argument("--dual-target-ratio", type=float, default=0.98)
     train_parser.add_argument("--dual-learning-rate", type=float, default=0.5)
@@ -494,6 +854,16 @@ def run(argv=None) -> int:
         ),
     )
     train_parser.add_argument("--evaluation-interval", type=int, default=10_240)
+    train_parser.add_argument(
+        "--stochastic-validation-seeds",
+        type=int,
+        nargs="*",
+        default=[],
+        help=(
+            "Optional sampled-action validation seeds evaluated beside each "
+            "deterministic validation. These diagnostics never select a checkpoint."
+        ),
+    )
     train_parser.add_argument(
         "--qos-rate-ratio",
         type=float,
@@ -660,6 +1030,74 @@ def run(argv=None) -> int:
         from ho_optim_drl.commands import validate_3gpp
 
         return validate_3gpp.main(root_path, args)
+    if args.command == "audit_baseline_parity":
+        from ho_optim_drl.commands import audit_baseline_parity
+
+        return audit_baseline_parity.main(root_path, args)
+    if args.command == "audit_b1_lower_threshold":
+        from ho_optim_drl.commands import audit_b1_lower_threshold
+
+        return audit_b1_lower_threshold.main(root_path, args)
+    if args.command == "audit_b2_b3_early_controls":
+        from ho_optim_drl.commands import audit_b2_b3_early_controls
+
+        return audit_b2_b3_early_controls.main(root_path, args)
+    if args.command == "audit_early_timing_references":
+        from ho_optim_drl.commands import audit_early_timing_references
+
+        return audit_early_timing_references.main(root_path, args)
+    if args.command == "audit_early_timing_bank":
+        from ho_optim_drl.commands import audit_early_timing_bank
+
+        return audit_early_timing_bank.main(root_path, args)
+    if args.command == "audit_early_timing_routes":
+        from ho_optim_drl.commands import audit_early_timing_routes
+
+        return audit_early_timing_routes.main(root_path, args)
+    if args.command == "audit_t5a_benefit_sources":
+        from ho_optim_drl.commands import audit_t5a_benefit_sources
+
+        return audit_t5a_benefit_sources.main(root_path, args)
+    if args.command == "audit_t6a_seed_divergence":
+        from ho_optim_drl.commands import audit_t6a_seed_divergence
+
+        return audit_t6a_seed_divergence.main(root_path, args)
+    if args.command == "verify_early_timing_t2_t3":
+        from ho_optim_drl.commands import verify_early_timing_t2_t3
+
+        return verify_early_timing_t2_t3.main(root_path, args)
+    if args.command == "audit_early_timing_learnability":
+        from ho_optim_drl.commands import audit_early_timing_learnability
+
+        return audit_early_timing_learnability.main(root_path, args)
+    if args.command == "audit_early_timing_observation_ablation":
+        from ho_optim_drl.commands import audit_early_timing_learnability
+
+        return audit_early_timing_learnability.main(root_path, args)
+    if args.command == "analyze_t4b_errors":
+        from ho_optim_drl.commands import analyze_t4b_errors
+
+        return analyze_t4b_errors.main(root_path, args)
+    if args.command == "build_post_ttt_train_bank":
+        from ho_optim_drl.commands import build_post_ttt_train_bank
+
+        return build_post_ttt_train_bank.main(root_path, args)
+    if args.command == "audit_t4c_post_ttt_probe":
+        from ho_optim_drl.commands import audit_t4c_post_ttt_probe
+
+        return audit_t4c_post_ttt_probe.main(root_path, args)
+    if args.command == "audit_t4d_compact_causal_probe":
+        from ho_optim_drl.commands import audit_t4d_compact_causal_probe
+
+        return audit_t4d_compact_causal_probe.main(root_path, args)
+    if args.command == "audit_t4d1_ranked_probe":
+        from ho_optim_drl.commands import audit_t4d1_ranked_probe
+
+        return audit_t4d1_ranked_probe.main(root_path, args)
+    if args.command == "audit_sinr_rule_fullroute":
+        from ho_optim_drl.commands import audit_sinr_rule_fullroute
+
+        return audit_sinr_rule_fullroute.main(root_path, args)
     if args.command == "audit_candidates":
         from ho_optim_drl.commands import audit_candidates
 

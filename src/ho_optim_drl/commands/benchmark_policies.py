@@ -177,6 +177,9 @@ def main(root_path: str, args: Namespace) -> int:
     observation_schema = str(
         objective.get("observation_schema_key", "legacy_v1")
     )
+    decision_trigger = str(
+        objective.get("trigger", "completed_a3_ttt")
+    )
     reward_schema = str(objective.get("reward", LEGACY_REWARD_SCHEMA))
     reward_config = reward_config_from_dict(
         reward_schema,
@@ -185,6 +188,17 @@ def main(root_path: str, args: Namespace) -> int:
     stay_mode = str(objective.get("stay_mode", "reject_event_v1"))
     stay_redecision_ms = int(objective.get("stay_redecision_ms", 100))
     protocol_config = load_protocol_config(data_dir, checkpoint_extra)
+    saved_reference_protocol = checkpoint_extra.get(
+        "reference_protocol_config"
+    )
+    reference_protocol_config = (
+        load_protocol_config(
+            data_dir,
+            {"protocol_config": saved_reference_protocol},
+        )
+        if saved_reference_protocol is not None
+        else protocol_config
+    )
     if args.split_seed is None:
         args.split_seed = checkpoint_extra.get("split_seed", 17)
     checkpoint_fractions = checkpoint_extra.get("split_fractions", {})
@@ -237,21 +251,32 @@ def main(root_path: str, args: Namespace) -> int:
 
     all_rows = []
     for policy in policies:
+        policy_protocol_config = (
+            reference_protocol_config
+            if policy.name == "3gpp_always_ho"
+            else protocol_config
+        )
         env = HandoverSMDPEnv(
-            protocol_config,
+            policy_protocol_config,
             data_dir=data_dir,
             trace_pairs=selected_pairs,
             gamma_per_second=agent.config.gamma_per_second,
             candidate_count=candidate_count,
             candidate_order=candidate_order,
             observation_schema=observation_schema,
+            decision_trigger=(
+                "completed_a3_ttt"
+                if policy.name == "3gpp_always_ho"
+                else decision_trigger
+            ),
             reward_schema=reward_schema,
             reward_config=reward_config,
             stay_mode=stay_mode,
             stay_redecision_ms=stay_redecision_ms,
         )
         env.load_reward_state(checkpoint_extra.get("reward_state"))
-        env.validate_checkpoint_objective(checkpoint_extra)
+        if policy.name == "ppo":
+            env.validate_checkpoint_objective(checkpoint_extra)
         all_rows.extend(
             benchmark_policy(
                 env,
@@ -282,6 +307,9 @@ def main(root_path: str, args: Namespace) -> int:
         metadata={
             "checkpoint": checkpoint_path,
             "protocol_config": asdict(protocol_config),
+            "reference_protocol_config": asdict(
+                reference_protocol_config
+            ),
             "checkpoint_extra": checkpoint_extra,
             "data_dir": data_dir,
             "split": args.split,

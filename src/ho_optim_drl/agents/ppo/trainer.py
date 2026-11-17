@@ -99,6 +99,10 @@ class EvaluationMetrics:
     )
     action_counts: dict[str, int] = field(default_factory=dict)
     action_fractions: dict[str, float] = field(default_factory=dict)
+    timing_stage_action_counts: dict[str, int] = field(default_factory=dict)
+    timing_stage_action_fractions: dict[str, float] = field(
+        default_factory=dict
+    )
     mean_handover_penalty: float = 0.0
     mean_handover_failure_penalty: float = 0.0
     mean_rlf_recovery_penalty: float = 0.0
@@ -368,12 +372,13 @@ class ValidationCheckpointManager:
                     self.qos_relative_rate_ratio_per_speed
                 ),
                 "best_qos_priority": [
-                    "rlf_time_percent",
+                    "mean_relative_rate_percent",
                     "handover_failure_percent",
                     "ping_pong_percent",
+                    "rlf_time_percent",
                     "total_handover_attempts",
-                    "mean_estimated_rate_mbps",
                 ],
+                "best_qos_selection": "qos_first_v2",
                 "pareto_maximize": list(self._PARETO_MAXIMIZE),
                 "pareto_minimize": list(self._PARETO_MINIMIZE),
             },
@@ -438,7 +443,7 @@ class ValidationCheckpointManager:
         feasible = [
             record for record in self.records if record["qos_feasible"]
         ]
-        best_qos = min(feasible, key=self._reliability_key) if feasible else None
+        best_qos = min(feasible, key=self._qos_key) if feasible else None
         if best_qos is not None:
             best_qos["is_best_qos"] = True
 
@@ -490,6 +495,18 @@ class ValidationCheckpointManager:
             for field in cls._PARETO_MINIMIZE
         )
         return no_worse and strictly_better
+
+    @staticmethod
+    def _qos_key(record: dict[str, Any]) -> tuple[float, ...]:
+        """Rank feasible checkpoints by QoS, then mobility reliability."""
+        metrics = record["validation"]
+        return (
+            -metrics["mean_relative_rate_percent"],
+            metrics["handover_failure_percent"],
+            metrics["ping_pong_percent"],
+            metrics["rlf_time_percent"],
+            float(metrics["total_handover_attempts"]),
+        )
 
     @staticmethod
     def _reliability_key(record: dict[str, Any]) -> tuple[float, ...]:
@@ -688,6 +705,7 @@ class SMDPPPO:
         primitive_ticks = 0
         simulated_seconds = 0.0
         action_counts: Counter[str] = Counter()
+        timing_stage_action_counts: Counter[str] = Counter()
         speed_counts: Counter[str] = Counter()
         raw_reward_totals: Counter[str] = Counter()
         discounted_reward_totals: Counter[str] = Counter()
@@ -744,6 +762,12 @@ class SMDPPPO:
             ) = env.step(action)
             action_name = HandoverAction(action).name
             action_counts[action_name] += 1
+            decision_info = info.get("decision") or {}
+            decision_stage = decision_info.get("stage")
+            if decision_stage is not None:
+                timing_stage_action_counts[
+                    f"{decision_stage}:{action_name}"
+                ] += 1
             speed_counts[str(info.get("speed_kmh", "unknown"))] += 1
             primitive_ticks += int(info["duration_ticks"])
             duration_seconds = float(info["duration_seconds"])
@@ -844,6 +868,9 @@ class SMDPPPO:
             "primitive_ticks": primitive_ticks,
             "simulated_seconds": simulated_seconds,
             "action_counts": dict(sorted(action_counts.items())),
+            "timing_stage_action_counts": dict(
+                sorted(timing_stage_action_counts.items())
+            ),
             "macro_steps_by_speed": dict(sorted(speed_counts.items())),
             "mean_valid_actions": float(np.mean(valid_action_counts)),
             "mask_availability_fraction": {
@@ -1335,6 +1362,7 @@ class SMDPPPO:
         relative_rates_by_speed: dict[str, list[float]] = {}
         total_actions = 0
         evaluation_action_counts: Counter[str] = Counter()
+        timing_stage_action_counts: Counter[str] = Counter()
         handover_actions = 0
         stay_actions = 0
         total_samples = 0
@@ -1408,7 +1436,14 @@ class SMDPPPO:
                 )
                 episode_steps += 1
                 total_actions += 1
-                evaluation_action_counts[HandoverAction(action).name] += 1
+                action_name = HandoverAction(action).name
+                evaluation_action_counts[action_name] += 1
+                decision_info = info.get("decision") or {}
+                decision_stage = decision_info.get("stage")
+                if decision_stage is not None:
+                    timing_stage_action_counts[
+                        f"{decision_stage}:{action_name}"
+                    ] += 1
                 handover_actions += int(action != HandoverAction.STAY)
                 stay_actions += int(action == HandoverAction.STAY)
                 if terminated or truncated:
@@ -1539,6 +1574,13 @@ class SMDPPPO:
                 )
                 for action in list(HandoverAction)[: self.model.action_size]
             },
+            timing_stage_action_counts=dict(
+                sorted(timing_stage_action_counts.items())
+            ),
+            timing_stage_action_fractions={
+                key: count / total_actions if total_actions else 0.0
+                for key, count in sorted(timing_stage_action_counts.items())
+            },
             mean_handover_penalty=float(np.mean(handover_penalties)),
             mean_handover_failure_penalty=float(
                 np.mean(handover_failure_penalties)
@@ -1547,6 +1589,48 @@ class SMDPPPO:
                 np.mean(rlf_recovery_penalties)
             ),
         )
+
+    def evaluate_stochastic_seeds(
+        self,
+        env: HandoverSMDPEnv,
+        seeds: tuple[int, ...],
+    ) -> list[dict[str, Any]]:
+        """Evaluate sampled actions without perturbing the training RNG stream."""
+        normalized_seeds = tuple(int(seed) for seed in seeds)
+        if len(set(normalized_seeds)) != len(normalized_seeds):
+            raise ValueError("Stochastic validation seeds must be unique.")
+        if not normalized_seeds:
+            return []
+
+        python_state = random.getstate()
+        numpy_state = np.random.get_state()
+        torch_state = torch.random.get_rng_state()
+        cuda_states = (
+            torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+        )
+        results: list[dict[str, Any]] = []
+        try:
+            for seed in normalized_seeds:
+                random.seed(seed)
+                np.random.seed(seed)
+                torch.manual_seed(seed)
+                if torch.cuda.is_available():
+                    torch.cuda.manual_seed_all(seed)
+                results.append(
+                    {
+                        "seed": seed,
+                        "metrics": asdict(
+                            self.evaluate(env, deterministic=False)
+                        ),
+                    }
+                )
+        finally:
+            random.setstate(python_state)
+            np.random.set_state(numpy_state)
+            torch.random.set_rng_state(torch_state)
+            if cuda_states is not None:
+                torch.cuda.set_rng_state_all(cuda_states)
+        return results
 
     def train(
         self,
@@ -1558,6 +1642,7 @@ class SMDPPPO:
         checkpoint_path: str | os.PathLike[str] | None = None,
         checkpoint_extra: dict[str, Any] | None = None,
         checkpoint_manager: ValidationCheckpointManager | None = None,
+        stochastic_validation_seeds: tuple[int, ...] = (),
         progress_callback: ProgressCallback | None = None,
         progress_interval: int = 50,
     ) -> list[dict[str, Any]]:
@@ -1669,6 +1754,37 @@ class SMDPPPO:
                 )
                 if checkpoint_selection is not None:
                     record["checkpoint_selection"] = checkpoint_selection
+                stochastic_validation: list[dict[str, Any]] = []
+                if stochastic_validation_seeds:
+                    self._emit(
+                        progress_callback,
+                        {
+                            "event": "stochastic_validation_started",
+                            "macro_steps": self.total_macro_steps,
+                            "update": self.update_count,
+                            "trajectories": validation_env.num_trajectories,
+                            "seeds": list(stochastic_validation_seeds),
+                            "validation_trigger": validation_trigger,
+                        },
+                    )
+                    validation_env.load_reward_state(reward_state)
+                    stochastic_validation = self.evaluate_stochastic_seeds(
+                        validation_env,
+                        stochastic_validation_seeds,
+                    )
+                    record["stochastic_validation"] = stochastic_validation
+                    for stochastic_result in stochastic_validation:
+                        self._emit(
+                            progress_callback,
+                            {
+                                "event": "stochastic_validation_complete",
+                                "macro_steps": self.total_macro_steps,
+                                "update": self.update_count,
+                                "seed": stochastic_result["seed"],
+                                "validation_trigger": validation_trigger,
+                                **stochastic_result["metrics"],
+                            },
+                        )
                 while next_evaluation <= self.total_macro_steps:
                     next_evaluation += evaluation_interval
                 last_validation_step = self.total_macro_steps

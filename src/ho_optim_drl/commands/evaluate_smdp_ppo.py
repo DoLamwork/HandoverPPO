@@ -37,6 +37,7 @@ def main(root_path: str, args: Namespace) -> int:
     observation_schema = str(
         objective.get("observation_schema_key", "legacy_v1")
     )
+    decision_trigger = str(objective.get("trigger", "completed_a3_ttt"))
     reward_schema = str(objective.get("reward", LEGACY_REWARD_SCHEMA))
     reward_config = reward_config_from_dict(
         reward_schema,
@@ -57,6 +58,7 @@ def main(root_path: str, args: Namespace) -> int:
         candidate_count=candidate_count,
         candidate_order=candidate_order,
         observation_schema=observation_schema,
+        decision_trigger=decision_trigger,
         reward_schema=reward_schema,
         reward_config=reward_config,
         stay_mode=stay_mode,

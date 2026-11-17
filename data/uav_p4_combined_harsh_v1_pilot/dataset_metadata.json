@@ -1,0 +1,1103 @@
+{
+  "schema_version": 1,
+  "created_at_utc": "2026-10-24T01:12:57.247184+00:00",
+  "dataset_format": "handover_ppo_train_ready_v1",
+  "radio": {
+    "carrier_hz": 2100000000.0,
+    "bandwidth_hz": 10000000.0,
+    "delta_t_ms": 10
+  },
+  "radio_provenance": "generation_manifest",
+  "generation": {
+    "schema_version": 3,
+    "generator": "uav_simulation",
+    "generator_provenance": {
+      "distribution": "handover-ppo",
+      "distribution_version": "1.1.0",
+      "entrypoint": "uav_simulation.batch.generate_dataset",
+      "source_tree_sha256": "24122049116c8002a343681aab1ef31c6d7725388ae6f44217ed3975638d97b3",
+      "source_files_sha256": {
+        "__init__.py": "d42a3e664e221ffb5083d4b32557e791a1cf9b37f25f878422bb4cb5f1335fea",
+        "__main__.py": "432eb1667a5fc2dac6a82346b52166917b36955e6dcf1e544e703b3acb5abf65",
+        "antenna_model.py": "e37df9b14dbc2b5937ce2ed4a1b467d8045688848097fa16c125db5e3aaaea8c",
+        "batch/__init__.py": "53d29ab05c6b8269069ea85f3e42ccd8607e79e09c8251377227efd3d26ab418",
+        "batch/generate_batch.py": "08cee999f5e5cec18a0c0fd949570ccc99be5290cdd86b8c0744f26dfa85dea5",
+        "batch/generate_batch_300m.py": "e3bd5f374bfc4a95b116877f63cb5da5e420f0ca80007de2cdeaa8bd66afd910",
+        "batch/generate_batch_grid100_h100.py": "b1b4ddb4bc9c0ac6424afae472045b7310a4382fd6e050ebee2dd70812514f1b",
+        "batch/generate_dataset.py": "10029d92b3b5d897c858d6635d3b3d5cef07a83aaf7f3ff18e457e0cf0a0cb99",
+        "cli.py": "ccd57060b43749afc13de3319d0d3330fbea8f9c79bd5776a3917c4f739d1fc2",
+        "config.py": "f0c99524643103faeb3c1bfa9d68a9099777bb3fe8c31b68aecaa1362343b5dc",
+        "hexagons.py": "51328782d239ae3980b2c54035e79e0cf847ed26709ffdc0c1a423baed884e42",
+        "interactive.py": "9cd9206dbf33c79db11571a28feb6c29e2846ef69f718d413ca12cfc7ec99c5d",
+        "logger.py": "2e23096a11ac1a506b5eaf969b1e289f6cae7d00c1eeaeea3c4095e76a47c859",
+        "manifest.py": "f1f3f7e764bacb23cdd80a2c1d444f3db5b4e4d8134f64349b6c696a6e914709",
+        "mobility.py": "c2a62248a3658aa76be3da8538c12cc9882c5eddbddfc59c46da4512777a8d31",
+        "paths.py": "d7924dbb4acb6a94ecd7c8bd839243326493be6e6bc030928bc42a237793c70b",
+        "radio_models.py": "a60226f0e3a2e48ad64b06cfd9fb374225dd213df158bb6baaca098e81563c62",
+        "route_tools.py": "95be01d8a80a7c194ab7c511155ea0cb263b75a3fff374669a8d01413ff5ab29",
+        "simulation.py": "0e8ef3d3322c05420c77c0d734a59607eb6f5b9935dd38e18efdbd80f444fca7",
+        "utils.py": "c2bf2153d6bdeff4078f8b9e88672e2319b452a384fb2ce8a4bde515d11f7b37",
+        "validation/__init__.py": "753b8714631d19e12c5488808c08ad8ea5d608139eb17d75b0f5545327414172",
+        "validation/channel_statistics.py": "c13422c93551d488830d2b109eee86aec14974c6a17e08ed7f20a0a41c3c2e59",
+        "visualization/__init__.py": "6af67e2d5b1e2d3696207e84d0348b90b6481e32c657d57f8f97dcdc69c6a1b2",
+        "visualization/heatmap_viewer.py": "6ac3c1e9ccdd72f83344a06de87af7f59e6e978febc1142ac248b51ea0dad664",
+        "visualization/plot_antenna_pattern.py": "3a7dfec466b776fb3fd4e7a0048c2421e8785d713d9badf30280b0ef8d532e2f",
+        "visualization/plot_system_model.py": "8fe2006dee500c3c35a119da791c5217b75ac915695faa2249361ddea173359d",
+        "visualization/route_viewer.py": "2971a6e547a1585f1b6a12e9ffa7e84543f28c05e111c6bd44368cad6caf2582"
+      }
+    },
+    "parameters": {
+      "profile": "p4_combined_harsh_v1",
+      "speeds_kmh": [
+        90,
+        120,
+        150,
+        180,
+        210,
+        240
+      ],
+      "routes_per_speed": 20,
+      "start_route_id": 0,
+      "steps": 6000,
+      "altitude_m": 100.0,
+      "grid_spacing_m": 100.0,
+      "width_m": 2000.0,
+      "height_m": 1667.0,
+      "urban_profile": {
+        "building_area_ratio": 0.5,
+        "building_density_km2": 300.0,
+        "building_height_rayleigh_m": 20.0
+      },
+      "channel_profile": {
+        "los_state_correlation_distance_m": 25.0,
+        "rician_k_factor_db": 6.0
+      }
+    },
+    "seed_rule": "speed_kmh * 1000 + route_id",
+    "output_contract": "handover_ppo_train_ready_v1",
+    "csv_schema": "sample,time_ms,bs_0,...",
+    "split_unit": "whole trajectory",
+    "radio": {
+      "carrier_hz": 2100000000.0,
+      "bandwidth_hz": 10000000.0,
+      "delta_t_ms": 10
+    },
+    "simulation_config": {
+      "PTX": 35.0,
+      "GTX": 2.0,
+      "GRX": 2.0,
+      "USE_3GPP_3D_ANTENNA": true,
+      "BS_SECTOR_BEARINGS_DEG": [
+        0.0,
+        120.0,
+        240.0
+      ],
+      "BS_ANTENNA_NUM_VERTICAL": 8,
+      "BS_ANTENNA_NUM_HORIZONTAL": 4,
+      "BS_ANTENNA_SPACING_VERTICAL_LAMBDA": 0.5,
+      "BS_ANTENNA_SPACING_HORIZONTAL_LAMBDA": 0.5,
+      "BS_ANTENNA_MECHANICAL_DOWNTILT_DEG": 0.0,
+      "BS_ANTENNA_MECHANICAL_SLANT_DEG": 0.0,
+      "BS_ANTENNA_ELECTRICAL_DOWNTILT_DEG": 10.0,
+      "BS_ANTENNA_POLARIZATION_SLANT_DEG": 45.0,
+      "BS_ANTENNA_POLARIZATION_MODEL": 2,
+      "BS_ANTENNA_MAX_ELEMENT_GAIN_DBI": 8.0,
+      "BS_ANTENNA_THETA_3DB_DEG": 65.0,
+      "BS_ANTENNA_PHI_3DB_DEG": 65.0,
+      "BS_ANTENNA_VERTICAL_SIDE_LOBE_ATTENUATION_DB": 30.0,
+      "BS_ANTENNA_FRONT_BACK_ATTENUATION_DB": 30.0,
+      "FC": 2.1,
+      "DELTA_T_MS": 10,
+      "H_BS": 25.0,
+      "H_UT": 100.0,
+      "BUILDING_AREA_RATIO": 0.5,
+      "BUILDING_DENSITY_KM2": 300.0,
+      "BUILDING_HEIGHT_RAYLEIGH_M": 20.0,
+      "PATHLOSS_MODE": "correlated_state",
+      "LOS_STATE_CORRELATION_DISTANCE_M": 25.0,
+      "LOS_STATE_SHARED_PER_SITE": true,
+      "EXCESS_LOSS_LOS_DB": 1.0,
+      "EXCESS_LOSS_NLOS_DB": 20.0,
+      "SF_SIGMA": {
+        "LOS": 4.6,
+        "NLOS": 10.0
+      },
+      "ENABLE_SMALL_SCALE_FADING": true,
+      "RICIAN_K_FACTOR_DB": 6.0,
+      "FADING_NUM_SINUSOIDS": 16,
+      "FADING_SUBSTEP_MS": 1.0,
+      "SPEED_OF_LIGHT_M_S": 299792458.0,
+      "BANDWIDTH_MHZ": 10.0,
+      "NUM_RESOURCE_BLOCKS": 51,
+      "SUBCARRIERS_PER_RB": 12,
+      "THERMAL_NOISE_DENSITY_DBM_HZ": -174.0,
+      "NOISE_FIGURE_DB": 7.0,
+      "REFERENCE_SIGNAL_POWER_OFFSET_DB": 0.0
+    }
+  },
+  "trajectory_count": 120,
+  "trajectories": [
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 0,
+      "rsrp_file": "rsrp_90kmh_0.csv",
+      "rsrp_sha256": "5644bbe806382c1a50201bf7dd790b160493bd2ad608dcd93d0e8c865ecfbd4c",
+      "sinr_file": "sinr_90kmh_0.csv",
+      "sinr_sha256": "bc756c32d6cdf159a95282fb1d5da63b15d3afeecee3d86407b72c310cd570cc"
+    },
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 1,
+      "rsrp_file": "rsrp_90kmh_1.csv",
+      "rsrp_sha256": "63dfe87f83d4aa4b5ceffdde829a8442c37ba6f6e15038a63d41b36356e5b8ff",
+      "sinr_file": "sinr_90kmh_1.csv",
+      "sinr_sha256": "b224ef8d80eccdbb8a3e0f37c20de2efa4fae8a09e217abcda2e2f2fcdd3c3de"
+    },
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 2,
+      "rsrp_file": "rsrp_90kmh_2.csv",
+      "rsrp_sha256": "504b6b2f5273c91cceb0f8b307c70a2fe7892e9b3bad4e8f789e8962f09a6d96",
+      "sinr_file": "sinr_90kmh_2.csv",
+      "sinr_sha256": "5b8370907cf4653d0928502c61faa52652ed11095339bcce17cfd33813a92aff"
+    },
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 3,
+      "rsrp_file": "rsrp_90kmh_3.csv",
+      "rsrp_sha256": "80b394f9a64b86d3f3b881c27f2ef84e8178941cf2c0ded4c32d62b81c7f3f8b",
+      "sinr_file": "sinr_90kmh_3.csv",
+      "sinr_sha256": "e65b35b53d77d5603d21ce8b48e062339cdd761f29031e4f9b7774626a8b6ff0"
+    },
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 4,
+      "rsrp_file": "rsrp_90kmh_4.csv",
+      "rsrp_sha256": "a26131a2ee664f9e53206f8404c3c782c5bc5ed8da14f4e353a2c128556e8e09",
+      "sinr_file": "sinr_90kmh_4.csv",
+      "sinr_sha256": "8590ca4f4fee2c9e945d7f4d4712da9667ac7ddc1e7eb9414d90d085bf918d00"
+    },
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 5,
+      "rsrp_file": "rsrp_90kmh_5.csv",
+      "rsrp_sha256": "67f557a81ca527d1e140df3d595e9eb2d12e47aaea29dc444c47111efe0567b4",
+      "sinr_file": "sinr_90kmh_5.csv",
+      "sinr_sha256": "1a59a614bbb66ff82576ca1d12405f62a916fa6b43ebc53f842d410b22b3d9a7"
+    },
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 6,
+      "rsrp_file": "rsrp_90kmh_6.csv",
+      "rsrp_sha256": "0077b5ebc7c3037d7da059fc5c3c0e7077f1326c2cefc50ee40e5ed27f9d4997",
+      "sinr_file": "sinr_90kmh_6.csv",
+      "sinr_sha256": "3bceecf0768f3d9fbb155d48aa5165651f4e42ee4d22cdde0006a10a1b4ca8b8"
+    },
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 7,
+      "rsrp_file": "rsrp_90kmh_7.csv",
+      "rsrp_sha256": "bf9316d1641ecc6d3abe3af865e7ed57fb0bcadb02184c5334e4afc4838b3ff4",
+      "sinr_file": "sinr_90kmh_7.csv",
+      "sinr_sha256": "8809ef2dc17e1eb85b91f209cea3805a9cbe94baf35153a211292e7e38d38df6"
+    },
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 8,
+      "rsrp_file": "rsrp_90kmh_8.csv",
+      "rsrp_sha256": "5b7e3e6e766b66dc04db1764ca3084826f50e9e3c54ffd617d4321075216d5b3",
+      "sinr_file": "sinr_90kmh_8.csv",
+      "sinr_sha256": "e3522220876c479250fc78865eabe6ef7c4122f6e018d897f92973ab26be661a"
+    },
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 9,
+      "rsrp_file": "rsrp_90kmh_9.csv",
+      "rsrp_sha256": "d7ae28bfc04ccdbbcdf8d089a0a413c9c63feaf0e52aaa1841ccb73a2c1062b3",
+      "sinr_file": "sinr_90kmh_9.csv",
+      "sinr_sha256": "df38914eaa6d07fe2910a07da3491aa066efe623595548d66d4d47edfa3bf6ce"
+    },
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 10,
+      "rsrp_file": "rsrp_90kmh_10.csv",
+      "rsrp_sha256": "2175abd496dd36f3221ac9dbe07c2ec57e842ec3deb49332ff5f4b9db2d927ff",
+      "sinr_file": "sinr_90kmh_10.csv",
+      "sinr_sha256": "61a627e99a0b31aeda9b63144a987b346659d3b00529d703f5f66b910d20d381"
+    },
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 11,
+      "rsrp_file": "rsrp_90kmh_11.csv",
+      "rsrp_sha256": "ca968790972ddf182278f5a18c273e9daf977584b79cbe3b8304f2dd599048fa",
+      "sinr_file": "sinr_90kmh_11.csv",
+      "sinr_sha256": "311d77f3244147b92bc3767a4c47bf0e821bb3438570a4d1a7006ffd59a3b552"
+    },
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 12,
+      "rsrp_file": "rsrp_90kmh_12.csv",
+      "rsrp_sha256": "09817c768adf81496548a3bb7b6bb2e29fc221e4c841c64be3cfa5e392f0f81b",
+      "sinr_file": "sinr_90kmh_12.csv",
+      "sinr_sha256": "db3eb356240e8e5c869e44461d1e2359d5ab4fe5620bb1f93a431ba47d5a8fd4"
+    },
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 13,
+      "rsrp_file": "rsrp_90kmh_13.csv",
+      "rsrp_sha256": "38d3969496211f3b5bd160748cde174b9b0e947b8475727ba32a44fef333e38e",
+      "sinr_file": "sinr_90kmh_13.csv",
+      "sinr_sha256": "d161b1955e00d38aabdc1bed753048dd78db100c0a6eb115c4828d9fae98004d"
+    },
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 14,
+      "rsrp_file": "rsrp_90kmh_14.csv",
+      "rsrp_sha256": "056ccf903812c2f1acac9aebee2fe697f61f3f945a0e4273b1b10244af7e9019",
+      "sinr_file": "sinr_90kmh_14.csv",
+      "sinr_sha256": "a9723801166ac261f3dbed4780aa3ac34ae0e962a2c5be1a9a7c866b1eb3067e"
+    },
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 15,
+      "rsrp_file": "rsrp_90kmh_15.csv",
+      "rsrp_sha256": "3d21917e17330ec4ccfa156e1a938fd47e4c4f5aecefe9fec39bed4b097d2ab9",
+      "sinr_file": "sinr_90kmh_15.csv",
+      "sinr_sha256": "ab598156b64190ea7a6a8d0b251471595f8a6ae1317204a143a3ad6bb7eee2f5"
+    },
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 16,
+      "rsrp_file": "rsrp_90kmh_16.csv",
+      "rsrp_sha256": "63797465f41d740d335dffaac66a283a1f41a2aaa1f2d8c08820245c0f2f40d8",
+      "sinr_file": "sinr_90kmh_16.csv",
+      "sinr_sha256": "fe3202b15e3798e06fec25ebbbe9095e72f029874d8eff723dae1fdb4d584aac"
+    },
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 17,
+      "rsrp_file": "rsrp_90kmh_17.csv",
+      "rsrp_sha256": "35aa2c8e5ee166e631c92e259c490caff0d7833dd213ed01df416c7e2956d148",
+      "sinr_file": "sinr_90kmh_17.csv",
+      "sinr_sha256": "c59e7f69f5ac55dac7cd292ff85d140aa6dc994b4e96adf645a80136020b27c3"
+    },
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 18,
+      "rsrp_file": "rsrp_90kmh_18.csv",
+      "rsrp_sha256": "0f2c2a78c45a8714b6333aa2e14aaa0c348dd2d31528a67fa07542f5b899ae9e",
+      "sinr_file": "sinr_90kmh_18.csv",
+      "sinr_sha256": "33d517cf8884e806cc515723bcca28462136a20406f5d2eeb940dd5941c11708"
+    },
+    {
+      "speed_kmh": 90,
+      "trajectory_id": 19,
+      "rsrp_file": "rsrp_90kmh_19.csv",
+      "rsrp_sha256": "17a397003aab79ef2c55d747c4b5be551364e2a9bcf38de6aded705a963d3811",
+      "sinr_file": "sinr_90kmh_19.csv",
+      "sinr_sha256": "3f95eb185699e7ce9b5d127b1b924f1bd2cc1571c22f502a430892950b06c013"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 0,
+      "rsrp_file": "rsrp_120kmh_0.csv",
+      "rsrp_sha256": "78ffacb6ca425ab21cc642cab944ef9dc47c4ff5ae85ee9dd6355d84a2b8e8d6",
+      "sinr_file": "sinr_120kmh_0.csv",
+      "sinr_sha256": "007779cdd6ef74d251e1a080364f41e8e6718542fa579c0eb3406a31aa258a98"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 1,
+      "rsrp_file": "rsrp_120kmh_1.csv",
+      "rsrp_sha256": "6f9bd23ffe0ebdadcc04a773abe8ae0138bdcd6374796c94bff928dbb0f48c9c",
+      "sinr_file": "sinr_120kmh_1.csv",
+      "sinr_sha256": "d5e539c58aa92677466d2226bc66afca128e4e1ccb57b0498b609503b8c6a859"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 2,
+      "rsrp_file": "rsrp_120kmh_2.csv",
+      "rsrp_sha256": "3c796d8fa34c6c3d479ef2635e34b8a43efdb11a9c3cd6e68078073e91d8381d",
+      "sinr_file": "sinr_120kmh_2.csv",
+      "sinr_sha256": "631cb6f9485614d7b08d9e940914b81e46d0455c2b8bd71782b57da58c438467"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 3,
+      "rsrp_file": "rsrp_120kmh_3.csv",
+      "rsrp_sha256": "df075532811c4a01032eb660d76d6107b821f6974360de5486af4ce9b4c263ac",
+      "sinr_file": "sinr_120kmh_3.csv",
+      "sinr_sha256": "ac22eef84fb33d729e5d74ebcef8cb3324d2d53ad28c15f61bd1b2911f7ccde1"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 4,
+      "rsrp_file": "rsrp_120kmh_4.csv",
+      "rsrp_sha256": "4f8764ef0c5010e266e030dd6f7adaf64bae945a1a69452921fc30105b0056f9",
+      "sinr_file": "sinr_120kmh_4.csv",
+      "sinr_sha256": "5324984b59cdb880892e18ddd8d7e669d3a7f1e51cd286dae8d8ecebd8633dd9"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 5,
+      "rsrp_file": "rsrp_120kmh_5.csv",
+      "rsrp_sha256": "19084e7e0808d7e6fecd9488ea3622f8a793b277f00fa8ea4c2a359b09253678",
+      "sinr_file": "sinr_120kmh_5.csv",
+      "sinr_sha256": "920b39a879832fd7e492dd753b4b29f9fcd5dff94408b1f0aba471983cd2e338"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 6,
+      "rsrp_file": "rsrp_120kmh_6.csv",
+      "rsrp_sha256": "4a08f41665e2d46777425fe9f02c15eb484ca76c409ce96fdca26888fd0a19bc",
+      "sinr_file": "sinr_120kmh_6.csv",
+      "sinr_sha256": "60f759948958c81979037c71b6798cbf014242b1e44e21a744a1becba7fe5dfe"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 7,
+      "rsrp_file": "rsrp_120kmh_7.csv",
+      "rsrp_sha256": "8788abbaaebe14170068fbfd33fa5d052fcc2ec188cdcda60357b15b5ce808ea",
+      "sinr_file": "sinr_120kmh_7.csv",
+      "sinr_sha256": "ce3fe3977bc004d33fd0e2ee3d1715f24fd5b9a9cfb2578cd1fc11f21706f7e8"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 8,
+      "rsrp_file": "rsrp_120kmh_8.csv",
+      "rsrp_sha256": "480e14bb74a2c3c4f70e4377c4b902f7efc0edd7b440f448ea4076a8e5cec849",
+      "sinr_file": "sinr_120kmh_8.csv",
+      "sinr_sha256": "e6abb2259bcee77133b638d811aeef9ea685a3025f3f5d45cd98eb36105ac8cb"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 9,
+      "rsrp_file": "rsrp_120kmh_9.csv",
+      "rsrp_sha256": "9daa62510ff6038317fae6409e8a929cc517ee66610b6e8ca5cf7684f7f0d6e4",
+      "sinr_file": "sinr_120kmh_9.csv",
+      "sinr_sha256": "4672abcd33772204f2b558aef4425ab651a75ef8aa2c67389370b62099bb5305"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 10,
+      "rsrp_file": "rsrp_120kmh_10.csv",
+      "rsrp_sha256": "d9e6dda8731e18a8f8091606d21c437355d2d8d6e40b20cd7c62c3f347e129ce",
+      "sinr_file": "sinr_120kmh_10.csv",
+      "sinr_sha256": "80c37dacd04e526ec0f417a7e33f41e15663952a41cff0684a16198e4d11a0b9"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 11,
+      "rsrp_file": "rsrp_120kmh_11.csv",
+      "rsrp_sha256": "3e299844b79c3576705a5715bcf1a6bb1be681803b2b050ed4d29bab30c21b03",
+      "sinr_file": "sinr_120kmh_11.csv",
+      "sinr_sha256": "c419bdbf886433ef5d9fcefcbdac5d269c9e28b45d3d1b69856313b434ca5743"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 12,
+      "rsrp_file": "rsrp_120kmh_12.csv",
+      "rsrp_sha256": "9ffa7e65ff4f50e0fcf6d1a3a1a4f4e404749d2a015feda22569ec5c0d0e65eb",
+      "sinr_file": "sinr_120kmh_12.csv",
+      "sinr_sha256": "a2ea0b63e7a24b537e84f9c2d1ce0aa7e16dea27f6b1344c476b8ee3ffb38afc"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 13,
+      "rsrp_file": "rsrp_120kmh_13.csv",
+      "rsrp_sha256": "daa20942065857c716c7a192bb7902d1fede8601385562aeed34638af23c4aa4",
+      "sinr_file": "sinr_120kmh_13.csv",
+      "sinr_sha256": "58633b603ceb4c8bc9e91da75258864d3b2fefc47f5e2db3fb01b4f86e63c03d"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 14,
+      "rsrp_file": "rsrp_120kmh_14.csv",
+      "rsrp_sha256": "2a0840ce0140eb119593736f7531aa32fdfc1b82af85b59fb6ce1ba055783ed0",
+      "sinr_file": "sinr_120kmh_14.csv",
+      "sinr_sha256": "993a84f9025dc13cf9b9c8f6406ba20c3d3df8e7b072c194c5664f0d6b936700"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 15,
+      "rsrp_file": "rsrp_120kmh_15.csv",
+      "rsrp_sha256": "a1d7c27584f73d024b1448825996e18467438ac19c60c41f54324934bcc958d7",
+      "sinr_file": "sinr_120kmh_15.csv",
+      "sinr_sha256": "fa11907347f482aad2d20d519ba2720da8bdaf6ed1d7483502157d32f55c4016"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 16,
+      "rsrp_file": "rsrp_120kmh_16.csv",
+      "rsrp_sha256": "cf102f3832455a4db9873db77e3ee827956902f06965d7f6a99ebe9a501bd769",
+      "sinr_file": "sinr_120kmh_16.csv",
+      "sinr_sha256": "6287bc75fa0afab06a5399fe600bdd56abe0c11c42a99e285af4027c26ac4af3"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 17,
+      "rsrp_file": "rsrp_120kmh_17.csv",
+      "rsrp_sha256": "1ff344dbe3875dd31df0da09997eb2572cc003eb2c4d257652fcd05e6aeadc3a",
+      "sinr_file": "sinr_120kmh_17.csv",
+      "sinr_sha256": "17bdeb2544f3055ff275085ebbea3d1418bb65e6d2139c07cfc1248376397070"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 18,
+      "rsrp_file": "rsrp_120kmh_18.csv",
+      "rsrp_sha256": "9ef9a9c06dc7c801aa86aaf78fa302211cbe0518c29912d3a11cb6a06272d80f",
+      "sinr_file": "sinr_120kmh_18.csv",
+      "sinr_sha256": "083de689dce834ab9619f7c5807792f8a5bc141852407c6f753dd5a5f4e51124"
+    },
+    {
+      "speed_kmh": 120,
+      "trajectory_id": 19,
+      "rsrp_file": "rsrp_120kmh_19.csv",
+      "rsrp_sha256": "9889d4405d89918ce259b51e5e019783a564ebea77b8f964ef8dbda47bd4fdba",
+      "sinr_file": "sinr_120kmh_19.csv",
+      "sinr_sha256": "2fb937252e862baf290085f7ecb839c931c83a4cca0da6c860e1d1469f22cf83"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 0,
+      "rsrp_file": "rsrp_150kmh_0.csv",
+      "rsrp_sha256": "8ca63775da529a7ad8bbb51439bace21bb3715b8e00773c5e8041edc38784517",
+      "sinr_file": "sinr_150kmh_0.csv",
+      "sinr_sha256": "9ccb2ca851b2cd7b343bc810378fbc083f583d0a71a130f33e2d7c455892019c"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 1,
+      "rsrp_file": "rsrp_150kmh_1.csv",
+      "rsrp_sha256": "5c3588811df5c96a8d2a3abcb604f5782bd03bca2535d6d5506b1ce5aa5a5b7b",
+      "sinr_file": "sinr_150kmh_1.csv",
+      "sinr_sha256": "fe147a163ca099b8254a9c6de748a5965119964f46cc707c121fa3f882de9777"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 2,
+      "rsrp_file": "rsrp_150kmh_2.csv",
+      "rsrp_sha256": "19cf924257f174e3e3a08f613d9163810e455b33f5fbe0a98b71cd65b27b7e11",
+      "sinr_file": "sinr_150kmh_2.csv",
+      "sinr_sha256": "4cfec53e55fb571a21ac9a1ffad7bed29672cfeff5a8c6604dbb7a6bc29b50e9"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 3,
+      "rsrp_file": "rsrp_150kmh_3.csv",
+      "rsrp_sha256": "8ed0ebbe07ef0a745726aeb79f840dae5403943124e88c034f458b046ba63a8d",
+      "sinr_file": "sinr_150kmh_3.csv",
+      "sinr_sha256": "fa96d7ef9c7cfe50e03332ea6ea83d59e5926d1fbe63830dca272971d4deee83"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 4,
+      "rsrp_file": "rsrp_150kmh_4.csv",
+      "rsrp_sha256": "92853d29cb042f67cd84bdc43ea36d0cfdfe4f8913eb52830cbbef9ef7b01a92",
+      "sinr_file": "sinr_150kmh_4.csv",
+      "sinr_sha256": "5db0f00e175600b47b2e5ecac518c11ab9070cd502bfa265693a4684e0a3883a"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 5,
+      "rsrp_file": "rsrp_150kmh_5.csv",
+      "rsrp_sha256": "5d067155ab80c3791bbcfc22ce1ada18bc3e91d85c825cb50b6f08bc08be3e48",
+      "sinr_file": "sinr_150kmh_5.csv",
+      "sinr_sha256": "47431ff4aca8704106253de08d9669569db236feac8baeff381038bd84fc6327"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 6,
+      "rsrp_file": "rsrp_150kmh_6.csv",
+      "rsrp_sha256": "b9fd92ef7eacf787362cf05f1d1d73189b6c59e9abcef96b6c7ff038e55bb9ab",
+      "sinr_file": "sinr_150kmh_6.csv",
+      "sinr_sha256": "66da0c7a6a58e0381f0f040c86d0cc386483a7710ad3711b34fbb9d3f41eb48c"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 7,
+      "rsrp_file": "rsrp_150kmh_7.csv",
+      "rsrp_sha256": "7ed8ec6223c3954a090b7ff29123ecb7232cebfa5ac41efe82944956bfc1a30a",
+      "sinr_file": "sinr_150kmh_7.csv",
+      "sinr_sha256": "de15b1914437d73104c0c8b6501768e5b70fedb43e111a2244c3f3d7533d7280"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 8,
+      "rsrp_file": "rsrp_150kmh_8.csv",
+      "rsrp_sha256": "419dcd2ea9dc58344d3772e10a2f3b47e4772f75b059491a3cbc897fafb1ce9d",
+      "sinr_file": "sinr_150kmh_8.csv",
+      "sinr_sha256": "bf4bd5236feba3843624ce4db888ad1a300e0761151152674a0507095ff7a00b"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 9,
+      "rsrp_file": "rsrp_150kmh_9.csv",
+      "rsrp_sha256": "a278eb68ccf1867daff35e3391b33c271740d25f05801effeef289f5ff837e4c",
+      "sinr_file": "sinr_150kmh_9.csv",
+      "sinr_sha256": "bdd56828308930f63d2a60dd434ea3e10ddf5a26976d9709089b23dd57f97afc"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 10,
+      "rsrp_file": "rsrp_150kmh_10.csv",
+      "rsrp_sha256": "03d67d1f00bfbf25839d0ec500c3e20f7cd20b0d6bb1eed4d6cf4142f6bf9162",
+      "sinr_file": "sinr_150kmh_10.csv",
+      "sinr_sha256": "0843f41cb35d1634e6f1020515d12836e2267d2ebfe1ab003a0dc7d326c58f45"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 11,
+      "rsrp_file": "rsrp_150kmh_11.csv",
+      "rsrp_sha256": "fb92dea5ba8911f44a8632bb0b0cd93c7046b0d350aedddfc190148273f4ec73",
+      "sinr_file": "sinr_150kmh_11.csv",
+      "sinr_sha256": "0bf3312ab3dd4ea4aa0a10eff83fcef156baf8e0b9499a446fedebda6834fb41"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 12,
+      "rsrp_file": "rsrp_150kmh_12.csv",
+      "rsrp_sha256": "ed70461516634f576e85f5b865a6f8ac268815b146a62805e1f91b1534c0059d",
+      "sinr_file": "sinr_150kmh_12.csv",
+      "sinr_sha256": "5fd48e804d7c25f208cdb1f14e0b46ac9db875cd33bf73709235c61b02c3d4f3"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 13,
+      "rsrp_file": "rsrp_150kmh_13.csv",
+      "rsrp_sha256": "44b84888c0eaa317ae7e15d0e628026d8cb97502a5c2fc2a079f0739ee665530",
+      "sinr_file": "sinr_150kmh_13.csv",
+      "sinr_sha256": "16a654949f9d4407819350d6b04d65398cf9d888dc6ac4f6cac741291d4dc3b3"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 14,
+      "rsrp_file": "rsrp_150kmh_14.csv",
+      "rsrp_sha256": "f534e3f7d3ee89801f1a06e5d8d6a34d436770c09da781c33b1ea9a2a1a1b8eb",
+      "sinr_file": "sinr_150kmh_14.csv",
+      "sinr_sha256": "4b95cf5cae94fdac0c10c0ee2a7d04f9c04b4829419d2921898193ef6fd70c6e"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 15,
+      "rsrp_file": "rsrp_150kmh_15.csv",
+      "rsrp_sha256": "88afb8fa9f373244ff5cb0ffa12414c629b0f547c68e5d528195b94caf48fd7b",
+      "sinr_file": "sinr_150kmh_15.csv",
+      "sinr_sha256": "9c5867a7acc5399cf04b444f8bb7e5669f6ceb9165f66b8e0b932fad998750e5"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 16,
+      "rsrp_file": "rsrp_150kmh_16.csv",
+      "rsrp_sha256": "93cf77ccb383b71a5df89aa7eabe90733eb2d62f59faeddac3f1c36fa6078e16",
+      "sinr_file": "sinr_150kmh_16.csv",
+      "sinr_sha256": "099e987e3d8de880fbfded0a491951921635a62ffe6a65db4364bf78fea5235d"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 17,
+      "rsrp_file": "rsrp_150kmh_17.csv",
+      "rsrp_sha256": "ca5bf4de212f8e0735b868741220dd59bdd8147e92c93aa2ff16a476a032a967",
+      "sinr_file": "sinr_150kmh_17.csv",
+      "sinr_sha256": "cd356e909c435b6a600d9857e3aa801dfed9320eed5114ca1a78ccaa004beb15"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 18,
+      "rsrp_file": "rsrp_150kmh_18.csv",
+      "rsrp_sha256": "66f454cd840ab4f8d0317c91de0a4ab1e120f24fedbeaccc5b8ff44e16f74a55",
+      "sinr_file": "sinr_150kmh_18.csv",
+      "sinr_sha256": "899cf50600a7bc81ef110f9ba2d3957f28b87c1291c4bb6b6235c31c262e1165"
+    },
+    {
+      "speed_kmh": 150,
+      "trajectory_id": 19,
+      "rsrp_file": "rsrp_150kmh_19.csv",
+      "rsrp_sha256": "d35929b92074887852212350f29adb4898883f6168e31c1603390dca03c72756",
+      "sinr_file": "sinr_150kmh_19.csv",
+      "sinr_sha256": "b8eb3aeb49c32ac8f3e4d46ca145a7846ca12e667e51ed3dd0684584e6fdba00"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 0,
+      "rsrp_file": "rsrp_180kmh_0.csv",
+      "rsrp_sha256": "93a066e33ca011b643784576b59792f2a72b5788f306f48f59ddfaa2623491c4",
+      "sinr_file": "sinr_180kmh_0.csv",
+      "sinr_sha256": "8748c5dd332a194a59b63f1180fbda83fb2769a0b261d6cedae6726553f4e875"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 1,
+      "rsrp_file": "rsrp_180kmh_1.csv",
+      "rsrp_sha256": "08a44cb35a6b18300ba3b0d89d561dfc09e70da869a15f8cbc9b0080b7c48bef",
+      "sinr_file": "sinr_180kmh_1.csv",
+      "sinr_sha256": "ff2dd8aba5a3a05e96f14ed2ba05642cb5c16589ac4885859af0726912254076"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 2,
+      "rsrp_file": "rsrp_180kmh_2.csv",
+      "rsrp_sha256": "0e186977d02aff69cbfb493e485cb9f8dff0fee49d40675ea1c28cd7aae10b55",
+      "sinr_file": "sinr_180kmh_2.csv",
+      "sinr_sha256": "f1e4abee045425505ed0d4f8f41e611e24533818b1f920e65498699182d6356a"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 3,
+      "rsrp_file": "rsrp_180kmh_3.csv",
+      "rsrp_sha256": "28e3499466dfdf7e92722e1ea3e22a5225edf0e7a7be653b223b97147d9dbf81",
+      "sinr_file": "sinr_180kmh_3.csv",
+      "sinr_sha256": "7013cf8674328a87129aa70c78873917afd0724971b96dbe4756145c58598787"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 4,
+      "rsrp_file": "rsrp_180kmh_4.csv",
+      "rsrp_sha256": "4c8d285ef41f39b2498a4dd56dce307c773237f4978c5b26e2b4fbc592e8728f",
+      "sinr_file": "sinr_180kmh_4.csv",
+      "sinr_sha256": "f504d08a4b47b561b6de4c1c520f6bb0832f5d8cac0a6fd7c0dc76863ad5ddf6"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 5,
+      "rsrp_file": "rsrp_180kmh_5.csv",
+      "rsrp_sha256": "28dbce0b6d9079d5c5d39142f25390421d496f9df496a3511f8d96c9833bf537",
+      "sinr_file": "sinr_180kmh_5.csv",
+      "sinr_sha256": "ce24d762a9a97e062586e299eee1d2eecb671319017df4074523cd3a088cbf75"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 6,
+      "rsrp_file": "rsrp_180kmh_6.csv",
+      "rsrp_sha256": "3ff78a6605310b73731f815367a49cc4164ad2821a29c72719c379ef79a85a43",
+      "sinr_file": "sinr_180kmh_6.csv",
+      "sinr_sha256": "d3e57d08dc5d768968454a017a495d6b72e986d6566b078869670898aa65e908"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 7,
+      "rsrp_file": "rsrp_180kmh_7.csv",
+      "rsrp_sha256": "726e34ab838d3f8880dc662861abe604d5fee5e06c761106fe4c5468cc75d723",
+      "sinr_file": "sinr_180kmh_7.csv",
+      "sinr_sha256": "1435ab9831d3d9553603274197a08114283914b679c4a0ef65aa83fa7220e8fa"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 8,
+      "rsrp_file": "rsrp_180kmh_8.csv",
+      "rsrp_sha256": "a8618c8a893f7956b72c1286ffff44d262b30ccb4ef6a0489eea59d975e9a356",
+      "sinr_file": "sinr_180kmh_8.csv",
+      "sinr_sha256": "a59503270e2ab75bf94ce82e5718a9cdf874a88cbec64ea75ad6e79e3c3e6a92"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 9,
+      "rsrp_file": "rsrp_180kmh_9.csv",
+      "rsrp_sha256": "c239f47ada93687bd50cc78f07ef7b272ac062e54380539b94f5bfa910619a91",
+      "sinr_file": "sinr_180kmh_9.csv",
+      "sinr_sha256": "058acf980585fabc4341bbac8b0199925c5d0bddf3efa437538757c4be657355"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 10,
+      "rsrp_file": "rsrp_180kmh_10.csv",
+      "rsrp_sha256": "989b0b8bf82bee5c0bb5c6a2cce47dd5746d26818b79903d3f219af06ee28da1",
+      "sinr_file": "sinr_180kmh_10.csv",
+      "sinr_sha256": "c2acb1c232c3d318dbf6979a2b5e0f8dcf026012230d1c19bf40b7740fe5c1f0"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 11,
+      "rsrp_file": "rsrp_180kmh_11.csv",
+      "rsrp_sha256": "0f33c761513a99f61d3b769aa9252b04226c8dbb63e4c8e5a2ea63fba20381f9",
+      "sinr_file": "sinr_180kmh_11.csv",
+      "sinr_sha256": "29761e05800180eeae315d13e73c11aa6af21d900f856d2f278fc60572b4f1fe"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 12,
+      "rsrp_file": "rsrp_180kmh_12.csv",
+      "rsrp_sha256": "e7f742d63151ab24d12ef7414a37e6accaabad5e7a0da7b7823502daa5eb3e95",
+      "sinr_file": "sinr_180kmh_12.csv",
+      "sinr_sha256": "12a9313cac9f6b509dd3a0e3d3828fd32cba39b2bfdd2273e7caed2857b71db3"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 13,
+      "rsrp_file": "rsrp_180kmh_13.csv",
+      "rsrp_sha256": "b0effccffff0fcbf61ba6540230223bafbc50a143438226abcbae6de2308e4df",
+      "sinr_file": "sinr_180kmh_13.csv",
+      "sinr_sha256": "4c5c99fcf4cc8197086e3baeff5d6964c123686191a30455f024c18cf1e6a954"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 14,
+      "rsrp_file": "rsrp_180kmh_14.csv",
+      "rsrp_sha256": "a796fd6e1e624b64c069b6df9c5910d817a91e10170b57366552821b32813c95",
+      "sinr_file": "sinr_180kmh_14.csv",
+      "sinr_sha256": "ebfea0ea742a956b031c5d6915d3583273ae0869996dcebc47066fbc2e6e37f2"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 15,
+      "rsrp_file": "rsrp_180kmh_15.csv",
+      "rsrp_sha256": "0e4c08a7b03cbb124e24e8792c7ecc425279b55722c8166249691e8c6ab5b590",
+      "sinr_file": "sinr_180kmh_15.csv",
+      "sinr_sha256": "c6d7c4d1ff8bfd48f3896cf8721d185d82e1b4d8f908d73bd0f0d13c88e5de86"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 16,
+      "rsrp_file": "rsrp_180kmh_16.csv",
+      "rsrp_sha256": "045ecfc08a4ed42316a68bbe15564f306c48bb8d05a86e0085afd6e5c629005a",
+      "sinr_file": "sinr_180kmh_16.csv",
+      "sinr_sha256": "d4fd7273b277335d9a880dd7b538b8dca275da428361c4653355297ca69eddc0"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 17,
+      "rsrp_file": "rsrp_180kmh_17.csv",
+      "rsrp_sha256": "db1dac0f6af8e55d24f41ebc1df168bcae79572d297018989595f3a67c41a6d3",
+      "sinr_file": "sinr_180kmh_17.csv",
+      "sinr_sha256": "4a30a0d928b89b872fe69e080050ce8ec509282b4fb6963f71a5aeeae20c356f"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 18,
+      "rsrp_file": "rsrp_180kmh_18.csv",
+      "rsrp_sha256": "af1bef189f4f0e2e3b20a0c2150404341f0fcf7a90db1b27cb4626ba15698df2",
+      "sinr_file": "sinr_180kmh_18.csv",
+      "sinr_sha256": "75f407fec23a9bcea3d50be7c1fa4bd3c58ccbfb50b477f33ba2382d77122433"
+    },
+    {
+      "speed_kmh": 180,
+      "trajectory_id": 19,
+      "rsrp_file": "rsrp_180kmh_19.csv",
+      "rsrp_sha256": "b32ed7c5e27eab552228c2569e20b259c5cfe786daa20e2ed765f537ded6b3d3",
+      "sinr_file": "sinr_180kmh_19.csv",
+      "sinr_sha256": "b6be92b6e5ba0f22f4376dce149aab09307150e399fa9a25781e8ab3b4a43339"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 0,
+      "rsrp_file": "rsrp_210kmh_0.csv",
+      "rsrp_sha256": "2971022171518685df5905118cc646b23979bcd3d51f12369d39486006be1cb5",
+      "sinr_file": "sinr_210kmh_0.csv",
+      "sinr_sha256": "e4fb7abb6fdec583b234c4f34a885504e62fdeb4a492f59378ecb64cc9a48f05"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 1,
+      "rsrp_file": "rsrp_210kmh_1.csv",
+      "rsrp_sha256": "c54a7344c1a11556d69f9f12ea32b65aa417d1957514cd9ab0a195c74b3c8f9d",
+      "sinr_file": "sinr_210kmh_1.csv",
+      "sinr_sha256": "46270a6bb4c89077fee0d39aa78f35d62185474481e61b531ef8a81fcf693def"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 2,
+      "rsrp_file": "rsrp_210kmh_2.csv",
+      "rsrp_sha256": "537c95933966fbcc597052c37ed8727739622237311231f735043e095e9ce7d6",
+      "sinr_file": "sinr_210kmh_2.csv",
+      "sinr_sha256": "d2f36654a470e40ac1ee6ab195fda28183a8404536476e9cef4299a557ab7e3d"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 3,
+      "rsrp_file": "rsrp_210kmh_3.csv",
+      "rsrp_sha256": "5a8695f34b022bca4af2bb53cc617d1fbf2ffe4cfbbb6e9f73110672ecef9ff3",
+      "sinr_file": "sinr_210kmh_3.csv",
+      "sinr_sha256": "2d4f6cbe02f25fbde549e8297820a15b19d2bbf1092527c0e41282d951a6783e"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 4,
+      "rsrp_file": "rsrp_210kmh_4.csv",
+      "rsrp_sha256": "3862955d519d374061b59b1c0f8b62150d353405826b8dbc3890f080b9b5c99c",
+      "sinr_file": "sinr_210kmh_4.csv",
+      "sinr_sha256": "8d80bdb24073c6cf7bb19e3663b12d6bad8d42c1ca716063d488881c4850ba2b"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 5,
+      "rsrp_file": "rsrp_210kmh_5.csv",
+      "rsrp_sha256": "ac955103377616f588619236ce0f6def450cb85a0b053217ce702c64171d11e7",
+      "sinr_file": "sinr_210kmh_5.csv",
+      "sinr_sha256": "6230ade921f816b19f64735446ba68d09cae4d6b0d33777d81c0274d49a3cf23"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 6,
+      "rsrp_file": "rsrp_210kmh_6.csv",
+      "rsrp_sha256": "a8a7cacff39fc3c0e93f61149cce2000c41a35df41f7abdb0494adfae405a1c1",
+      "sinr_file": "sinr_210kmh_6.csv",
+      "sinr_sha256": "6b8d8406398fd73a1e362ee79d7e425bb8c21a2048f3afaec8920f81100d5777"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 7,
+      "rsrp_file": "rsrp_210kmh_7.csv",
+      "rsrp_sha256": "355270fc83b7f045bee6b7e4e78d19f296dc01a9485832490ab6df45dff28a77",
+      "sinr_file": "sinr_210kmh_7.csv",
+      "sinr_sha256": "c44e2f2423d955b5151d245e67b0e451ccad860fe1bc23dd20f1b8e137518de5"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 8,
+      "rsrp_file": "rsrp_210kmh_8.csv",
+      "rsrp_sha256": "29347842a0806158c457f60c450b78b3d32cbe4450a4876aff20256756e5564d",
+      "sinr_file": "sinr_210kmh_8.csv",
+      "sinr_sha256": "ee36353286b9265deb851ba777e6579dc0611179bd0819f764b09adecf998d01"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 9,
+      "rsrp_file": "rsrp_210kmh_9.csv",
+      "rsrp_sha256": "27bcb47ff6ec261b55f633e521e03661ae1072089a21044b68f6bf91f9e295c8",
+      "sinr_file": "sinr_210kmh_9.csv",
+      "sinr_sha256": "2ee7f000839086c77fbd0d443a79ecb45d196af84e75e4b9f739a893cba70191"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 10,
+      "rsrp_file": "rsrp_210kmh_10.csv",
+      "rsrp_sha256": "42c3f2cb4da085e2c507e9d08568c51b16ca628178421b272858cbc71ef11ce0",
+      "sinr_file": "sinr_210kmh_10.csv",
+      "sinr_sha256": "7d37725350e7bf131afa1d7660a895403cc3d52d0f5cab7f6cf0bcbc4f1378f2"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 11,
+      "rsrp_file": "rsrp_210kmh_11.csv",
+      "rsrp_sha256": "18713f1849d4af69a59a7931aa78a2261da06d699e1b14b3c60d281a7607b10b",
+      "sinr_file": "sinr_210kmh_11.csv",
+      "sinr_sha256": "30112ffe59b5f7ae1cb56fd670bcc81c8568ea80aa38042956d67a813e2b183c"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 12,
+      "rsrp_file": "rsrp_210kmh_12.csv",
+      "rsrp_sha256": "011035dab54e0269bbe824cdc0b7b4f988f1e5a7fe2652c2ed510f1ce47e14fd",
+      "sinr_file": "sinr_210kmh_12.csv",
+      "sinr_sha256": "60e0c8ef6a2a6f60c33a7ace98a6e6bb450cc0acbcfc14116f2c4a9a42ce16d7"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 13,
+      "rsrp_file": "rsrp_210kmh_13.csv",
+      "rsrp_sha256": "d51a9c91630edfda5a8a443bc1eea5bddf3c058b5debb740e11004622d23aa76",
+      "sinr_file": "sinr_210kmh_13.csv",
+      "sinr_sha256": "5bde2d66188f241c996ffe22b3f5e1d69d60e3db97096f847f74123c3566b1a2"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 14,
+      "rsrp_file": "rsrp_210kmh_14.csv",
+      "rsrp_sha256": "2e54a061e27ccf9c54028d1997f6b5280dc9160b7dcfd09f6ee08fbfe4771661",
+      "sinr_file": "sinr_210kmh_14.csv",
+      "sinr_sha256": "efaa2bc193a729b8394490f70a648834b34a74f81e56b80fce6df17981371e65"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 15,
+      "rsrp_file": "rsrp_210kmh_15.csv",
+      "rsrp_sha256": "b9ef7866b2a8283b1d11ad9b9a81e78949f83ed8988a05459071cc62bdcd6d74",
+      "sinr_file": "sinr_210kmh_15.csv",
+      "sinr_sha256": "f047e1d44aa029fd376f9a20982018c0f5578fb142dc81e26eddf99f53cdc8fe"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 16,
+      "rsrp_file": "rsrp_210kmh_16.csv",
+      "rsrp_sha256": "345656e288c25a8269b672a0ce1af72b92729b2dc380d519e4ad33b427bed933",
+      "sinr_file": "sinr_210kmh_16.csv",
+      "sinr_sha256": "7c64e1dc31550783cefde2bd99ed05d89c6d047240e35ef79f5e36d511641d76"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 17,
+      "rsrp_file": "rsrp_210kmh_17.csv",
+      "rsrp_sha256": "9dfee46aa62fdff6ae63b325f499897248c4f85abb1c50845e80529751b995bc",
+      "sinr_file": "sinr_210kmh_17.csv",
+      "sinr_sha256": "ffa8445529fbcb7cdccb1918b6449c538d79abe8ebabb82f7eb9b7870dc6c9f7"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 18,
+      "rsrp_file": "rsrp_210kmh_18.csv",
+      "rsrp_sha256": "7eb1aee6024b6156b3baf1b9b98653b29274c624c1938cfa992d3536df2ea8dc",
+      "sinr_file": "sinr_210kmh_18.csv",
+      "sinr_sha256": "c1d47b68639d90a5a8d605a2725773f6a34157976e36944d8378aab5e64b545f"
+    },
+    {
+      "speed_kmh": 210,
+      "trajectory_id": 19,
+      "rsrp_file": "rsrp_210kmh_19.csv",
+      "rsrp_sha256": "f77676e162aea4ad3f708359f4a7c9bbe8840ac887c3e9e475559d5daef233ba",
+      "sinr_file": "sinr_210kmh_19.csv",
+      "sinr_sha256": "a31530b6324b29287d8f6e7e1fd8734a0b6776cd728c3598ade5a96eda8da57b"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 0,
+      "rsrp_file": "rsrp_240kmh_0.csv",
+      "rsrp_sha256": "c6dc0d79115ba8e1426bc6738d2893ab19a8990ab8ea3e24df305210e529dbf7",
+      "sinr_file": "sinr_240kmh_0.csv",
+      "sinr_sha256": "9f2ead568887bdb4900d1310403d05ab9d40d69df109fc3136dba8411922e0d4"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 1,
+      "rsrp_file": "rsrp_240kmh_1.csv",
+      "rsrp_sha256": "a98bb7f92149f25c7afbba3c4cb135088456986903ff9ff383bfe870c24d1786",
+      "sinr_file": "sinr_240kmh_1.csv",
+      "sinr_sha256": "208e3299f98f070084ff69be92547de75f135ff232e35ca3e347f4e3c157216b"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 2,
+      "rsrp_file": "rsrp_240kmh_2.csv",
+      "rsrp_sha256": "f4cf0ff35c0a3ee22ea64172b1140d1105c62e54e668a4880664a860ceb342b3",
+      "sinr_file": "sinr_240kmh_2.csv",
+      "sinr_sha256": "cc9977824261744148549ba034e2da5e945bc088962b1938baf8fd3df2ff5e6f"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 3,
+      "rsrp_file": "rsrp_240kmh_3.csv",
+      "rsrp_sha256": "401bb7c0811b427cd834a3b98846bb670b47fe2ade2e7b0d74bb2c498b90618b",
+      "sinr_file": "sinr_240kmh_3.csv",
+      "sinr_sha256": "b9d5fda66f8ebbca37622bf3cbb8d87458cca198339ef779b0cb60e392e8e5d6"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 4,
+      "rsrp_file": "rsrp_240kmh_4.csv",
+      "rsrp_sha256": "b5584da1cedc40c300309f8614150797396d315d48ad6c13fd4100c8b9aa0987",
+      "sinr_file": "sinr_240kmh_4.csv",
+      "sinr_sha256": "092116b56d6c49e125716af35a7e5611cd87555de80687e3a3925ce5d11cfe1d"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 5,
+      "rsrp_file": "rsrp_240kmh_5.csv",
+      "rsrp_sha256": "976292b0b61498d417435d897c987c654369957b9bc08f7fd95fae6ecc4c22b4",
+      "sinr_file": "sinr_240kmh_5.csv",
+      "sinr_sha256": "0dc5612de7ef20ac3f10be77d7bdfad75e922d50755c66c576ae123fda766e53"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 6,
+      "rsrp_file": "rsrp_240kmh_6.csv",
+      "rsrp_sha256": "0af2c454dd4f2f9194c6ac4e880ca33cd34dfb1cde8fb417e3e2f0c9be8c7003",
+      "sinr_file": "sinr_240kmh_6.csv",
+      "sinr_sha256": "50efba66374015d8c7382974efaba24c9271772762056e2567fbab148cce682f"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 7,
+      "rsrp_file": "rsrp_240kmh_7.csv",
+      "rsrp_sha256": "1c52dce96ac1567492433d84ba779afe4a56bd70afddfb0d07f5310a450d9a40",
+      "sinr_file": "sinr_240kmh_7.csv",
+      "sinr_sha256": "c1cba1e83459e3040009e9c0e0a889d28414731e8ee39c3da9caf71554c4ffad"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 8,
+      "rsrp_file": "rsrp_240kmh_8.csv",
+      "rsrp_sha256": "cfd2333b19f6d882c29a3ca0a2aa9d85628c7f72df89cbb6f9f2457cb417d226",
+      "sinr_file": "sinr_240kmh_8.csv",
+      "sinr_sha256": "930f3be0e65d874dd97997ac8d981c9bb3016e24bc8da8406ec043e481a393c0"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 9,
+      "rsrp_file": "rsrp_240kmh_9.csv",
+      "rsrp_sha256": "bbbba74a18cb8c1dc5179f1fa264c516f671c070917c98f6dcdba6101b0c40a8",
+      "sinr_file": "sinr_240kmh_9.csv",
+      "sinr_sha256": "75f2627e5ec87291668e5b10fc352bcb600de16f4a28c4c00b6576b93034e34d"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 10,
+      "rsrp_file": "rsrp_240kmh_10.csv",
+      "rsrp_sha256": "46008977ae8bcbfc2cb89b592e0bc57033397d9bbc6ed8d52d441abc52a902f0",
+      "sinr_file": "sinr_240kmh_10.csv",
+      "sinr_sha256": "621e713d400aac913f48a948bb981194fb6293745ce5dcc28df5d95555bf1788"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 11,
+      "rsrp_file": "rsrp_240kmh_11.csv",
+      "rsrp_sha256": "9440751a5203274ead19e5db551aba52f8522f1ec26830f99de2acdf4d9fbac0",
+      "sinr_file": "sinr_240kmh_11.csv",
+      "sinr_sha256": "9c2bbfc1224b0482884a36f1678ae9a10c364b635a994b2ac4dae53432babeaa"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 12,
+      "rsrp_file": "rsrp_240kmh_12.csv",
+      "rsrp_sha256": "6715059b438113ab2654056da2e41826cf83c36161175e5243c387f4d08e5f9a",
+      "sinr_file": "sinr_240kmh_12.csv",
+      "sinr_sha256": "90cb5f37d457ae581ddc2935b875b5e17fd0f9a246cf6fd3aad73df9b0cc67c0"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 13,
+      "rsrp_file": "rsrp_240kmh_13.csv",
+      "rsrp_sha256": "f3b37a059faebe1ce266a9793bf5143da3ddcbbcc892cf50af253ce897d2c190",
+      "sinr_file": "sinr_240kmh_13.csv",
+      "sinr_sha256": "2ff88167dbc0955c0fff7aa7f1bd64629929400cb101ad793c8fd648366e9dd9"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 14,
+      "rsrp_file": "rsrp_240kmh_14.csv",
+      "rsrp_sha256": "63b6d81d579ae75b91134c8ba528a2b864d928a7d238854fcaf2ad3dd50004fb",
+      "sinr_file": "sinr_240kmh_14.csv",
+      "sinr_sha256": "c946382b72cf29c881fcc83622495e41b71eb7b257257d6506647cb19d9800f4"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 15,
+      "rsrp_file": "rsrp_240kmh_15.csv",
+      "rsrp_sha256": "7cc5bb225183c50896fce0324e1a922904e5362b2b878e3e3628e68f427167ea",
+      "sinr_file": "sinr_240kmh_15.csv",
+      "sinr_sha256": "841ae18b60982e428082637d202ce0a0f0ffd3e79452f1749cd48d8575d03c2e"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 16,
+      "rsrp_file": "rsrp_240kmh_16.csv",
+      "rsrp_sha256": "34d4c22217b09e2eb45536f8949b1d94df14de5083ad836357b5706aa7041c26",
+      "sinr_file": "sinr_240kmh_16.csv",
+      "sinr_sha256": "cda77d56205f5ae532bae50e5caf89581ff89c99fa568e1168fdf759f58f984d"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 17,
+      "rsrp_file": "rsrp_240kmh_17.csv",
+      "rsrp_sha256": "e176b7e52cda0074c25f5135ee564f6ecf0bceeff4c9ba32e8a5849574b61ed0",
+      "sinr_file": "sinr_240kmh_17.csv",
+      "sinr_sha256": "7f8fafc0e8ec303ee73bb9b738494132314a33de64a64ae96ce80d4ea3ea3cd6"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 18,
+      "rsrp_file": "rsrp_240kmh_18.csv",
+      "rsrp_sha256": "477c4c13845bfcea34f78d7cdf4bd58af40b469805af9822fb7d585c36071d76",
+      "sinr_file": "sinr_240kmh_18.csv",
+      "sinr_sha256": "62084905c3eeb4f6ae9e1af1b8d6cd353483d0f51ecc02423b502e67101ca1dc"
+    },
+    {
+      "speed_kmh": 240,
+      "trajectory_id": 19,
+      "rsrp_file": "rsrp_240kmh_19.csv",
+      "rsrp_sha256": "bdf37e4c82bb85c99118f508535ffc41a5976e753754bcb01085c7897ce22f86",
+      "sinr_file": "sinr_240kmh_19.csv",
+      "sinr_sha256": "7454b75e2fb5149c04326c61d1edfb913402f024a361ef5bddd02529ae4dbb88"
+    }
+  ],
+  "csv_schema": "sample,time_ms,bs_0,...",
+  "split_unit": "whole trajectory"
+}

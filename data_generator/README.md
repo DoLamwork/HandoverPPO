@@ -30,6 +30,22 @@ route, heatmap, plot-antenna, plot-system và validate. Mọi lệnh batch ghi s
 `sample,time_ms,bs_0,...` và tên `{rsrp|sinr}_{speed}kmh_{route}.csv` mà PPO đọc
 trực tiếp. Chế độ GUI/single-run vẫn giữ output legacy nhiều UE để phục vụ khảo sát.
 
+Audit các thành phần thực sự chi phối RSRP của P0 bằng deterministic replay từ
+manifest và seed rule. Lệnh đối chiếu RSRP replay với CSV, rồi xếp hạng `Gtx`,
+FSPL, LoS/NLoS excess loss, shadow fading và fast fading theo biên độ
+`max - min` của **cùng một sector trên toàn route** và biến động trung bình mỗi
+10 ms. Báo cáo có phân vị gộp các cặp route–sector và bảng theo tốc độ; không
+lấy cực trị sau khi gộp 21 sector:
+
+```powershell
+.\.venv\Scripts\python.exe -m uav_simulation audit-rsrp-factors `
+  --data-dir data/uav_p0_canonical_v1_pilot `
+  --output-dir results/analysis/p0_rsrp_factor_audit
+```
+
+Có thể chạy smoke audit một route bằng `--speeds 30 --route-ids 0`. Output gồm
+`factor_report.json`, `route_factor_summary.jsonl` và `report_vi.md`.
+
 Profile dùng cho dataset grid100 chính có generator riêng:
 
 ```powershell

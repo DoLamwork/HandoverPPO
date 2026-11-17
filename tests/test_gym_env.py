@@ -62,6 +62,85 @@ def _full_candidate_trace(trace_id: str, num_samples: int = 16) -> RadioTrace:
 
 
 class HandoverGymContractTests(unittest.TestCase):
+    def test_a3_entry_trigger_offers_action_without_waiting_for_ttt(self) -> None:
+        trace = _decision_trace("a3_entry", num_samples=20)
+        legacy_env = HandoverSMDPEnv(
+            Config(),
+            traces=[trace],
+            candidate_count=1,
+            candidate_order="ranked_v1",
+            observation_schema="t4d1_compact_v1",
+            stay_mode="a3_redecision_v1",
+            stay_redecision_ms=20,
+        )
+        env = HandoverSMDPEnv(
+            Config(),
+            traces=[trace],
+            candidate_count=1,
+            candidate_order="ranked_v1",
+            observation_schema="t4d1_compact_v1",
+            decision_trigger="a3_entry_redecision_v1",
+            stay_mode="a3_redecision_v1",
+            stay_redecision_ms=20,
+        )
+
+        _, reset_info = env.reset()
+        _, legacy_reset_info = legacy_env.reset()
+
+        self.assertEqual(reset_info["decision"]["tic"], 0)
+        self.assertEqual(reset_info["decision"]["stage"], "entry")
+        self.assertEqual(reset_info["decision"]["trigger"], "early_window")
+        self.assertEqual(legacy_reset_info["decision"]["tic"], 4)
+        self.assertEqual(
+            env.objective_spec["trigger"], "a3_entry_redecision_v1"
+        )
+        _, _, terminated, _, step_info = env.step(int(HandoverAction.STAY))
+        self.assertFalse(terminated)
+        self.assertEqual(step_info["duration_ticks"], 2)
+        self.assertEqual(step_info["decision"]["stage"], "entry")
+        self.assertEqual(step_info["next_decision"]["tic"], 2)
+        self.assertEqual(step_info["next_decision"]["stage"], "scheduled")
+
+    def test_a3_entry_trigger_uses_strict_standard_entering_threshold(self) -> None:
+        exact = _decision_trace("exact", num_samples=8)
+        exact = RadioTrace.from_arrays(
+            np.vstack((np.full(8, -80.0), np.full(8, -78.0))),
+            exact.sinr_rate_db,
+            trace_id="exact",
+        )
+        env = HandoverSMDPEnv(
+            Config(),
+            traces=[exact],
+            decision_trigger="a3_entry_redecision_v1",
+            stay_mode="a3_redecision_v1",
+            stay_redecision_ms=20,
+        )
+        with self.assertRaisesRegex(RuntimeError, "no eligible A3-entry decision"):
+            env.reset()
+
+    def test_a3_entry_trigger_is_checkpointed_and_not_legacy_compatible(self) -> None:
+        trace = _decision_trace("entry_contract")
+        early = HandoverSMDPEnv(
+            traces=[trace],
+            decision_trigger="a3_entry_redecision_v1",
+            stay_mode="a3_redecision_v1",
+            stay_redecision_ms=20,
+        )
+        legacy = HandoverSMDPEnv(traces=[trace])
+
+        with self.assertRaisesRegex(ValueError, "trigger"):
+            legacy.validate_checkpoint_objective(
+                {"objective": early.objective_spec}
+            )
+
+    def test_a3_entry_trigger_rejects_non_redecision_stay(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires stay_mode"):
+            HandoverSMDPEnv(
+                traces=[_decision_trace("invalid_entry")],
+                decision_trigger="a3_entry_redecision_v1",
+                stay_mode="reject_event_v1",
+            )
+
     def test_stay_redecision_is_checkpointed_and_validated(self) -> None:
         trace = _decision_trace("redecision", num_samples=20)
         redecision_env = HandoverSMDPEnv(

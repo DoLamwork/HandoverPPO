@@ -1,0 +1,58 @@
+param(
+    [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot),
+    [ValidateSet('cpu', 'cuda')]
+    [string]$Device = 'cpu'
+)
+
+$ErrorActionPreference = 'Stop'
+$python = Join-Path $ProjectRoot '.venv\Scripts\python.exe'
+$output = Join-Path $ProjectRoot 'results\models\early_ho_timing\T6A_a3_entry_timing_pilot_b10240_s17'
+
+if (Test-Path -LiteralPath $output) {
+    throw "Refusing to overwrite existing T6A pilot output: $output"
+}
+
+$arguments = @(
+    'run.py', 'train_ppo',
+    '--data-dir', 'data/uav_100m_grid100m_dev_processed',
+    '--speeds', '30', '50', '70', '90',
+    '--candidate-count', '1',
+    '--candidate-order', 'ranked_v1',
+    '--observation-schema', 't4d1_compact_v1',
+    '--reward-schema', 'trajectory_qos_recovery_reward_v1',
+    '--decision-trigger', 'a3_entry_redecision_v1',
+    '--stay-mode', 'a3_redecision_v1',
+    '--stay-redecision-ms', '20',
+    '--network-architecture', 'shared_mlp_v1',
+    '--value-normalization', 'fixed_scale_v1',
+    '--value-scale-calibration-routes-per-speed', '20',
+    '--total-macro-steps', '10240',
+    '--rollout-steps', '1024',
+    '--batch-size', '128',
+    '--update-epochs', '4',
+    '--learning-rate', '0.00005',
+    '--evaluation-interval', '10240',
+    '--stochastic-validation-seeds', '17', '29', '43',
+    '--learning-diagnostics',
+    '--qos-rate-ratio', '0.98',
+    '--qos-rate-ratio-per-speed', '0.98',
+    '--qos-relative-rate-ratio', '0.98',
+    '--qos-relative-rate-ratio-per-speed', '0.98',
+    '--seed', '17',
+    '--split-seed', '17',
+    '--device', $Device,
+    '--skip-final-test',
+    '--experiment-id', 'T6A_a3_entry_timing_pilot_b10240_s17',
+    '--parent-id', 'T5A_timing_ppo_fixed_scale_b100000_s17',
+    '--changed-factor', 'decision_trigger_completed_ttt_to_a3_entry',
+    '--output-dir', 'results/models/early_ho_timing/T6A_a3_entry_timing_pilot_b10240_s17'
+)
+
+Push-Location -LiteralPath $ProjectRoot
+try {
+    & $python @arguments
+    exit $LASTEXITCODE
+}
+finally {
+    Pop-Location
+}

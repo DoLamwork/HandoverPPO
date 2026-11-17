@@ -320,20 +320,56 @@ class RadioModel:
         ue_x, ue_y = self.sim.ue_positions[ue_idx]
         num_bs = len(self.sim.bs_positions)
         total_received_power_dbm = np.empty(num_bs, dtype=float)
+        antenna_gain_db = np.empty(num_bs, dtype=float)
+        fspl_db = np.empty(num_bs, dtype=float)
+        excess_loss_db = np.empty(num_bs, dtype=float)
+        path_loss_db = np.empty(num_bs, dtype=float)
+        shadow_loss_db = np.empty(num_bs, dtype=float)
+        fast_fading_gain_db = np.empty(num_bs, dtype=float)
+        p_los_values = np.empty(num_bs, dtype=float)
+        is_los_values = np.empty(num_bs, dtype=bool)
 
         for bs_idx in range(num_bs):
-            path_loss_db, p_los, is_los = self.calculate_path_loss_idx(
-                ue_x, ue_y, bs_idx, ue_idx
+            pl_los_db, pl_nlos_db, p_los = (
+                self.calculate_path_loss_components_idx(ue_x, ue_y, bs_idx)
             )
+            if self.sim.pathloss_mode == 'correlated_state':
+                is_los = self.update_correlated_los_state(
+                    ue_idx, bs_idx, p_los, (ue_x, ue_y)
+                )
+                realized_path_loss_db = pl_los_db if is_los else pl_nlos_db
+            else:
+                is_los = None
+                realized_path_loss_db = (
+                    p_los * pl_los_db + (1.0 - p_los) * pl_nlos_db
+                )
             shadow_db = self.shadow_fading(
                 ue_idx, bs_idx, p_los, (ue_x, ue_y), is_los
             )
             fading_db = self.small_scale_fading_db(
                 ue_idx, bs_idx, is_los, (ue_x, ue_y)
             )
-            total_received_power_dbm[bs_idx] = fading_db + self.calculate_received_power_idx(
-                bs_idx, path_loss_db + shadow_db, ue_x, ue_y
+            gain_db = self.calculate_bs_antenna_gain_idx(ue_x, ue_y, bs_idx)
+            total_received_power_dbm[bs_idx] = (
+                self.sim.bs_ptx[bs_idx]
+                + gain_db
+                + self.sim.grx
+                - realized_path_loss_db
+                - shadow_db
+                + fading_db
             )
+            antenna_gain_db[bs_idx] = gain_db
+            fspl_db[bs_idx] = pl_los_db - self.sim.excess_loss_los_db
+            excess_loss_db[bs_idx] = (
+                self.sim.excess_loss_los_db if is_los
+                else self.sim.excess_loss_nlos_db if is_los is not None
+                else realized_path_loss_db - fspl_db[bs_idx]
+            )
+            path_loss_db[bs_idx] = realized_path_loss_db
+            shadow_loss_db[bs_idx] = shadow_db
+            fast_fading_gain_db[bs_idx] = fading_db
+            p_los_values[bs_idx] = p_los
+            is_los_values[bs_idx] = bool(is_los) if is_los is not None else False
 
         if num_bs == 0:
             return total_received_power_dbm, np.empty(0, dtype=float)
@@ -348,4 +384,18 @@ class RadioModel:
         sinr_linear = received_mw / (interference_mw + noise_mw)
         sinr_db = 10.0 * np.log10(sinr_linear)
         rsrp_dbm = self.calculate_rsrp_dbm(total_received_power_dbm)
+        self.last_measurement_components = {
+            'ptx_dbm': np.asarray(self.sim.bs_ptx, dtype=float),
+            'antenna_gain_db': antenna_gain_db,
+            'fspl_db': fspl_db,
+            'excess_loss_db': excess_loss_db,
+            'path_loss_db': path_loss_db,
+            'shadow_loss_db': shadow_loss_db,
+            'fast_fading_gain_db': fast_fading_gain_db,
+            'p_los': p_los_values,
+            'is_los': is_los_values,
+            'received_power_dbm': total_received_power_dbm,
+            'rsrp_dbm': rsrp_dbm,
+            'sinr_db': sinr_db,
+        }
         return rsrp_dbm, sinr_db

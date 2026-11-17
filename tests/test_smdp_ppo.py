@@ -303,6 +303,37 @@ class PPOIntegrationTests(unittest.TestCase):
         self.assertEqual(metrics.stay_fraction, 1.0)
         self.assertEqual(metrics.handover_fraction, 0.0)
 
+    def test_evaluation_reports_early_timing_stage_actions(self) -> None:
+        early_env = HandoverSMDPEnv(
+            Config(),
+            traces=[_trace("early_stage_metrics", 3.0)],
+            gamma_per_second=0.99,
+            decision_trigger="a3_entry_redecision_v1",
+            stay_mode="a3_redecision_v1",
+            stay_redecision_ms=20,
+        )
+        agent = SMDPPPO(
+            early_env.observation_space.shape[0],
+            early_env.action_space.n,
+            self.config,
+        )
+
+        metrics = agent.evaluate(
+            early_env,
+            action_selector=lambda observation, action_mask: int(
+                HandoverAction.STAY
+            ),
+        )
+
+        self.assertGreater(metrics.timing_stage_action_counts["entry:STAY"], 0)
+        self.assertGreater(
+            metrics.timing_stage_action_counts["scheduled:STAY"], 0
+        )
+        self.assertAlmostEqual(
+            sum(metrics.timing_stage_action_fractions.values()),
+            1.0,
+        )
+
     def test_separate_validation_env_preserves_training_collector(self) -> None:
         agent = SMDPPPO(self.observation_size, len(HandoverAction), self.config)
         agent.collect_rollout(self.env, rollout_steps=1, reset_seed=11)
@@ -632,6 +663,50 @@ class PPOIntegrationTests(unittest.TestCase):
         ]
         self.assertEqual([event["macro_steps"] for event in completed], [4])
         self.assertEqual(completed[0]["validation_trigger"], "scheduled")
+
+    def test_stochastic_validation_is_reproducible_and_preserves_rng(self) -> None:
+        validation_env = HandoverSMDPEnv(
+            Config(), traces=[_trace("validation", 3.0)], gamma_per_second=0.99
+        )
+        agent = SMDPPPO(self.observation_size, len(HandoverAction), self.config)
+
+        torch.manual_seed(1234)
+        expected_after = torch.rand(8)
+        torch.manual_seed(1234)
+        first = agent.evaluate_stochastic_seeds(validation_env, (17, 29))
+        actual_after = torch.rand(8)
+        second = agent.evaluate_stochastic_seeds(validation_env, (17, 29))
+
+        self.assertTrue(torch.equal(expected_after, actual_after))
+        self.assertEqual(first, second)
+        self.assertEqual([row["seed"] for row in first], [17, 29])
+
+    def test_training_logs_stochastic_validation_without_checkpoint_selection(self) -> None:
+        validation_env = HandoverSMDPEnv(
+            Config(), traces=[_trace("validation", 3.0)], gamma_per_second=0.99
+        )
+        agent = SMDPPPO(self.observation_size, len(HandoverAction), self.config)
+        events: list[dict] = []
+
+        history = agent.train(
+            self.env,
+            total_macro_steps=4,
+            validation_env=validation_env,
+            evaluation_interval=4,
+            stochastic_validation_seeds=(17, 29),
+            progress_callback=events.append,
+        )
+
+        self.assertEqual(
+            [row["seed"] for row in history[0]["stochastic_validation"]],
+            [17, 29],
+        )
+        stochastic_events = [
+            event
+            for event in events
+            if event["event"] == "stochastic_validation_complete"
+        ]
+        self.assertEqual([event["seed"] for event in stochastic_events], [17, 29])
 
     def test_opt_in_learning_diagnostics_separate_actor_and_critic(self) -> None:
         config = SMDPPPOConfig(
@@ -1045,6 +1120,69 @@ class PPOIntegrationTests(unittest.TestCase):
             75.0 / 80.0,
         )
         self.assertIsNone(summary["best_qos"])
+
+    def test_best_qos_prioritizes_relative_rate_before_reliability(self) -> None:
+        agent = SMDPPPO(19, len(HandoverAction), self.config)
+        with tempfile.TemporaryDirectory() as directory:
+            manager = ValidationCheckpointManager(
+                directory,
+                reference_rate_mbps=10.0,
+                reference_rates_by_speed={30: 10.0},
+                reference_relative_rate_percent=80.0,
+                reference_relative_rates_by_speed={30: 80.0},
+                qos_rate_ratio=0.98,
+                qos_rate_ratio_per_speed=0.98,
+                qos_relative_rate_ratio=0.98,
+                qos_relative_rate_ratio_per_speed=0.98,
+            )
+            agent.total_macro_steps = 10
+            manager.record(
+                agent,
+                _evaluation_metrics(
+                    mean_return=1.0,
+                    rate_mbps=9.9,
+                    relative_rate_percent=79.0,
+                    rlf_time_percent=0.5,
+                    handover_failure_percent=1.0,
+                    ping_pong_percent=2.0,
+                    handover_attempts=3,
+                ),
+            )
+            agent.total_macro_steps = 20
+            manager.record(
+                agent,
+                _evaluation_metrics(
+                    mean_return=2.0,
+                    rate_mbps=10.0,
+                    relative_rate_percent=80.0,
+                    rlf_time_percent=2.0,
+                    handover_failure_percent=4.0,
+                    ping_pong_percent=5.0,
+                    handover_attempts=6,
+                ),
+            )
+            summary = manager.summary()
+            selected, _ = SMDPPPO.from_checkpoint(
+                summary["best_qos"],
+                observation_size=19,
+                action_size=len(HandoverAction),
+            )
+
+        self.assertEqual(selected.total_macro_steps, 20)
+        self.assertEqual(
+            summary["selection_policy"]["best_qos_priority"],
+            [
+                "mean_relative_rate_percent",
+                "handover_failure_percent",
+                "ping_pong_percent",
+                "rlf_time_percent",
+                "total_handover_attempts",
+            ],
+        )
+        self.assertEqual(
+            summary["selection_policy"]["best_qos_selection"],
+            "qos_first_v2",
+        )
 
     def test_progress_logger_prints_and_persists_json_lines(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

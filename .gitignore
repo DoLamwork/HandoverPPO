@@ -169,6 +169,12 @@ data.old/
 results/
 checkpoints/
 .codex/
+# Share the repository's research-agent guidance while retaining ignores for
+# any other machine-local Codex state.
+!.codex/
+!.codex/config.toml
+!.codex/agents/
+!.codex/agents/*.toml
 .agents/
 /__pycache__/
 

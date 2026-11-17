@@ -20,7 +20,11 @@ from ho_optim_drl.data import (
     load_cell_topology,
     load_radio_trace,
 )
-from ho_optim_drl.protocol import DecisionPoint, HandoverEngine
+from ho_optim_drl.protocol import (
+    DecisionPoint,
+    EarlyTimingHandoverEngine,
+    HandoverEngine,
+)
 from ho_optim_drl.smdp import (
     A3ObservationBuilder,
     A3ObservationConfig,
@@ -30,12 +34,21 @@ from ho_optim_drl.smdp import (
     MacroTransition,
     MacroTransitionBuilder,
     RewardBreakdown,
+    STAY_MODE_A3_REDECISION,
     STAY_MODE_REJECT_EVENT,
     SUPPORTED_STAY_MODES,
     SUPPORTED_REWARD_SCHEMAS,
     TopologyCandidateObservationBuilder,
     TrajectoryQoSRewardConfig,
     build_reward_model,
+)
+
+
+DECISION_TRIGGER_COMPLETED_A3_TTT = "completed_a3_ttt"
+DECISION_TRIGGER_A3_ENTRY = "a3_entry_redecision_v1"
+SUPPORTED_DECISION_TRIGGERS = (
+    DECISION_TRIGGER_COMPLETED_A3_TTT,
+    DECISION_TRIGGER_A3_ENTRY,
 )
 
 
@@ -66,6 +79,7 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
         candidate_count: int = 10,
         candidate_order: str = "legacy",
         observation_schema: str = "legacy_v1",
+        decision_trigger: str = DECISION_TRIGGER_COMPLETED_A3_TTT,
         stay_mode: str = STAY_MODE_REJECT_EVENT,
         stay_redecision_ms: int = 100,
     ) -> None:
@@ -75,8 +89,20 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
             protocol_config = load_protocol_config(data_dir)
         self.config = copy.deepcopy(protocol_config or Config())
         self.config.validate()
+        if decision_trigger not in SUPPORTED_DECISION_TRIGGERS:
+            raise ValueError(
+                f"Unsupported decision trigger: {decision_trigger!r}."
+            )
         if stay_mode not in SUPPORTED_STAY_MODES:
             raise ValueError(f"Unsupported STAY mode: {stay_mode!r}.")
+        if (
+            decision_trigger == DECISION_TRIGGER_A3_ENTRY
+            and stay_mode != STAY_MODE_A3_REDECISION
+        ):
+            raise ValueError(
+                "a3_entry_redecision_v1 requires stay_mode="
+                "'a3_redecision_v1'."
+            )
         if (
             not isinstance(stay_redecision_ms, int)
             or isinstance(stay_redecision_ms, bool)
@@ -112,8 +138,22 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
             reward_schema,
             reward_config,
         )
+        self.decision_trigger = decision_trigger
+        engine: HandoverEngine
+        if decision_trigger == DECISION_TRIGGER_A3_ENTRY:
+            # Match the standard A3 entering/leaving inequalities, but expose
+            # a decision immediately on entry instead of gating it by TTT.
+            engine = EarlyTimingHandoverEngine(
+                self.config,
+                enter_delta_db=self.config.a3_off + self.config.a3_hys,
+                exit_delta_db=self.config.a3_off - self.config.a3_hys,
+                enable_early_decisions=True,
+                enable_shadow_decisions=True,
+            )
+        else:
+            engine = HandoverEngine(self.config)
         self.transition_builder = MacroTransitionBuilder(
-            HandoverEngine(self.config),
+            engine,
             observation_builder,
             reward_model,
             gamma_per_second=gamma_per_second,
@@ -183,7 +223,7 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
                     f"{builder.observation_schema}"
                 )
             ),
-            "trigger": "completed_a3_ttt",
+            "trigger": self.decision_trigger,
             "candidate_policy": builder.CANDIDATE_POLICY,
             "candidate_order": builder.candidate_order_spec,
             "candidate_order_key": builder.candidate_order,
@@ -228,6 +268,7 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
             "reward",
         )
         optional_fields = (
+            "trigger",
             "candidate_order",
             "candidate_count",
             "observation_schema_key",
@@ -303,8 +344,13 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
             return self._observation_copy(observation), info
 
         requested = "requested trajectory" if options else "trajectory set"
+        decision_name = (
+            "completed A3 decision"
+            if self.decision_trigger == DECISION_TRIGGER_COMPLETED_A3_TTT
+            else "eligible A3-entry decision"
+        )
         raise RuntimeError(
-            f"The {requested} contains no completed A3 decision."
+            f"The {requested} contains no {decision_name}."
         )
 
     def step(
@@ -546,16 +592,23 @@ class HandoverSMDPEnv(gym.Env[np.ndarray, int]):
     @staticmethod
     def _decision_dict(
         decision: DecisionPoint | None,
-    ) -> dict[str, int | float] | None:
+    ) -> dict[str, int | float | str] | None:
         if decision is None:
             return None
-        return {
+        result: dict[str, int | float | str] = {
             "tic": decision.tic,
             "serving_cell": decision.serving_cell,
             "target_cell": decision.target_cell,
             "a3_start_tic": decision.a3_start_tic,
             "a3_margin_db": decision.a3_margin_db,
         }
+        for field_name in ("trigger", "stage", "scheduled_delay_ticks"):
+            value = getattr(decision, field_name, None)
+            if isinstance(value, (int, float, str)) and not isinstance(
+                value, bool
+            ):
+                result[field_name] = value
+        return result
 
     def _observation_copy(self, observation: np.ndarray) -> np.ndarray:
         copied = np.array(observation, dtype=np.float32, copy=True)

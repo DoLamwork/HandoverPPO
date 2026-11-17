@@ -12,6 +12,7 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -130,6 +131,185 @@ class OutputIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(metadata["dataset_format"], "handover_ppo_train_ready_v1")
             self.assertEqual(metadata["trajectory_count"], 1)
+
+    def test_p0_profile_is_recorded_and_rejects_noncanonical_geometry(self):
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "p0"
+            with patch.dict(
+                "uav_simulation.batch.generate_dataset.P0_CANONICAL_PARAMETERS",
+                {"steps": 4},
+            ), redirect_stdout(io.StringIO()):
+                result = generate_dataset([
+                        "--output-dir", str(output),
+                        "--profile", "p0_canonical_v1",
+                        "--speeds", "30",
+                        "--routes-per-speed", "1",
+                        "--steps", "4",
+                        "--altitude", "100",
+                        "--grid-spacing", "100",
+                        "--width", "2000",
+                        "--height", "1667",
+                        "--workers", "1",
+                    ])
+            self.assertEqual(result, 0)
+            metadata = json.loads(
+                (output / "dataset_metadata.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                metadata["generation"]["parameters"]["profile"],
+                "p0_canonical_v1",
+            )
+
+            with patch.dict(
+                "uav_simulation.batch.generate_dataset.P0_CANONICAL_PARAMETERS",
+                {"steps": 4},
+            ), self.assertRaises(SystemExit):
+                generate_dataset([
+                        "--output-dir", str(Path(directory) / "invalid"),
+                        "--profile", "p0_canonical_v1",
+                        "--speeds", "30",
+                        "--routes-per-speed", "1",
+                        "--steps", "4",
+                        "--altitude", "99",
+                        "--grid-spacing", "100",
+                        "--width", "2000",
+                        "--height", "1667",
+                        "--workers", "1",
+                    ])
+
+    def test_p1_profile_records_dense_urban_contract_and_restores_config(self):
+        from uav_simulation import config
+
+        original = (
+            config.BUILDING_AREA_RATIO,
+            config.BUILDING_DENSITY_KM2,
+            config.BUILDING_HEIGHT_RAYLEIGH_M,
+        )
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "p1"
+            with patch.dict(
+                "uav_simulation.batch.generate_dataset.P0_CANONICAL_PARAMETERS",
+                {"steps": 4},
+            ), redirect_stdout(io.StringIO()):
+                result = generate_dataset([
+                    "--output-dir", str(output),
+                    "--profile", "p1_dense_urban_v1",
+                    "--speeds", "30",
+                    "--routes-per-speed", "1",
+                    "--steps", "4",
+                    "--altitude", "100",
+                    "--grid-spacing", "100",
+                    "--width", "2000",
+                    "--height", "1667",
+                    "--workers", "1",
+                ])
+            self.assertEqual(result, 0)
+            metadata = json.loads(
+                (output / "dataset_metadata.json").read_text(encoding="utf-8")
+            )
+            parameters = metadata["generation"]["parameters"]
+            self.assertEqual(parameters["profile"], "p1_dense_urban_v1")
+            self.assertEqual(
+                parameters["urban_profile"],
+                {
+                    "building_area_ratio": 0.5,
+                    "building_density_km2": 300.0,
+                    "building_height_rayleigh_m": 20.0,
+                },
+            )
+            simulation_config = metadata["generation"]["simulation_config"]
+            self.assertEqual(simulation_config["BUILDING_AREA_RATIO"], 0.5)
+            self.assertEqual(simulation_config["BUILDING_DENSITY_KM2"], 300.0)
+            self.assertEqual(simulation_config["BUILDING_HEIGHT_RAYLEIGH_M"], 20.0)
+        self.assertEqual(
+            (
+                config.BUILDING_AREA_RATIO,
+                config.BUILDING_DENSITY_KM2,
+                config.BUILDING_HEIGHT_RAYLEIGH_M,
+            ),
+            original,
+        )
+
+    def test_p2_p3_p4_profiles_record_stress_contract_and_restore_config(self):
+        from uav_simulation import config
+
+        original = (
+            config.BUILDING_AREA_RATIO,
+            config.BUILDING_DENSITY_KM2,
+            config.BUILDING_HEIGHT_RAYLEIGH_M,
+            config.LOS_STATE_CORRELATION_DISTANCE_M,
+            config.RICIAN_K_FACTOR_DB,
+        )
+        specs = {
+            "p2_high_mobility_v1": {
+                "urban": (0.3, 500.0, 15.0),
+                "channel": (50.0, 10.0),
+            },
+            "p3_fast_channel_v1": {
+                "urban": (0.3, 500.0, 15.0),
+                "channel": (25.0, 6.0),
+            },
+            "p4_combined_harsh_v1": {
+                "urban": (0.5, 300.0, 20.0),
+                "channel": (25.0, 6.0),
+            },
+        }
+        with TemporaryDirectory() as directory:
+            for profile, expected in specs.items():
+                with self.subTest(profile=profile):
+                    output = Path(directory) / profile
+                    with patch.dict(
+                        "uav_simulation.batch.generate_dataset.P0_CANONICAL_PARAMETERS",
+                        {"steps": 4},
+                    ), patch.dict(
+                        "uav_simulation.batch.generate_dataset.LOCKED_PROFILE_SPEEDS",
+                        {profile: (30,)},
+                    ), redirect_stdout(io.StringIO()):
+                        result = generate_dataset([
+                            "--output-dir", str(output),
+                            "--profile", profile,
+                            "--speeds", "30",
+                            "--routes-per-speed", "1",
+                            "--steps", "4",
+                            "--altitude", "100",
+                            "--grid-spacing", "100",
+                            "--width", "2000",
+                            "--height", "1667",
+                            "--workers", "1",
+                        ])
+                    self.assertEqual(result, 0)
+                    metadata = json.loads(
+                        (output / "dataset_metadata.json").read_text(encoding="utf-8")
+                    )
+                    parameters = metadata["generation"]["parameters"]
+                    self.assertEqual(parameters["profile"], profile)
+                    self.assertEqual(
+                        tuple(parameters["urban_profile"].values()),
+                        expected["urban"],
+                    )
+                    self.assertEqual(
+                        tuple(parameters["channel_profile"].values()),
+                        expected["channel"],
+                    )
+                    simulation_config = metadata["generation"]["simulation_config"]
+                    self.assertEqual(
+                        simulation_config["LOS_STATE_CORRELATION_DISTANCE_M"],
+                        expected["channel"][0],
+                    )
+                    self.assertEqual(
+                        simulation_config["RICIAN_K_FACTOR_DB"],
+                        expected["channel"][1],
+                    )
+        self.assertEqual(
+            (
+                config.BUILDING_AREA_RATIO,
+                config.BUILDING_DENSITY_KM2,
+                config.BUILDING_HEIGHT_RAYLEIGH_M,
+                config.LOS_STATE_CORRELATION_DISTANCE_M,
+                config.RICIAN_K_FACTOR_DB,
+            ),
+            original,
+        )
 
     def test_spawn_workers_find_complete_and_incomplete_routes(self):
         modules = [import_module(f'uav_simulation.batch.{name}') for name in (

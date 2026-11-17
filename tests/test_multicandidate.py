@@ -9,6 +9,13 @@ import torch
 
 from ho_optim_drl import Config
 from ho_optim_drl.agents.ppo.network import ActorCritic
+from ho_optim_drl.commands.audit_early_timing_learnability import (
+    causal_features,
+    feature_names,
+)
+from ho_optim_drl.commands.audit_t4d_compact_causal_probe import (
+    RISK_FEATURE_NAMES,
+)
 from ho_optim_drl.data import RadioTrace, load_cell_topology
 from ho_optim_drl.protocol import HandoverEngine
 from ho_optim_drl.smdp import (
@@ -383,6 +390,42 @@ class TopologyCandidateTests(unittest.TestCase):
                 observation_schema="qos_full_v1",
                 trace=trace_without_speed,
             )
+
+    def test_t4d1_k1_matches_frozen_compact_causal_features(self) -> None:
+        trace = _delayed_a3_trace()
+        runner, observation = self._configured_runner(
+            candidate_count=1,
+            candidate_order="ranked_v1",
+            observation_schema="t4d1_compact_v1",
+            trace=trace,
+        )
+        snapshot = runner.engine.snapshot
+        decision = snapshot.decision_point
+        self.assertIsNotNone(decision)
+        full = causal_features(
+            trace,
+            tic=decision.tic,
+            serving=decision.serving_cell,
+            target=decision.target_cell,
+            a3_start_tic=decision.a3_start_tic,
+            speed_kmh=int(trace.speed_kmh),
+            q_out_db=runner.engine.config.q_out_db,
+            dt_ms=runner.engine.config.delta_t_ms,
+            snapshot=snapshot,
+            schema="t4b_protocol_history_v1",
+        )
+        names = feature_names("t4b_protocol_history_v1")
+        expected = full[[names.index(name) for name in RISK_FEATURE_NAMES]]
+        self.assertEqual(observation.shape, (19,))
+        self.assertEqual(
+            runner.observation_builder.feature_names,
+            RISK_FEATURE_NAMES,
+        )
+        np.testing.assert_allclose(observation, expected, rtol=0.0, atol=1e-7)
+        np.testing.assert_array_equal(
+            runner.observation_builder.action_mask(),
+            np.asarray([True, True]),
+        )
 
     def test_e04_e06_do_not_read_suffix_after_decision(self) -> None:
         original = _delayed_a3_trace()

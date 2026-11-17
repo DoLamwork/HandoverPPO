@@ -456,6 +456,7 @@ def write_experiment_config(
     agent: SMDPPPO,
     ppo_config: SMDPPPOConfig,
     protocol_config: Any,
+    reference_protocol_config: Any,
     manifest_paths: dict[str, Any],
     manifest: dict[str, Any],
     source_state: dict[str, Any],
@@ -600,8 +601,13 @@ def write_experiment_config(
             ),
             "final_test_enabled": not args.skip_final_test,
             "test_used_for_selection": False,
+            "checkpoint_selection_policy": "deterministic_argmax",
+            "stochastic_validation_seeds": list(
+                args.stochastic_validation_seeds
+            ),
         },
         "protocol_config": asdict(protocol_config),
+        "reference_protocol_config": asdict(reference_protocol_config),
         "dataset": {
             "manifest_file": os.path.basename(manifest_paths["json"]),
             "manifest_sha256": manifest_paths["sha256"],
@@ -776,6 +782,27 @@ class TrainingProgressLogger:
                 f"{marker}",
                 flush=True,
             )
+        elif event_name == "stochastic_validation_started":
+            seeds = ",".join(str(seed) for seed in event["seeds"])
+            print(
+                f"[validation stochastic] evaluating "
+                f"{event['trajectories']} trajectories for seeds {seeds}...",
+                flush=True,
+            )
+        elif event_name == "stochastic_validation_complete":
+            print(
+                f"[validation stochastic seed={event['seed']}] "
+                f"return {event['mean_return']:.3f} +/- "
+                f"{event['std_return']:.3f} | "
+                f"rate {event['mean_estimated_rate_mbps']:.3f} Mbps | "
+                f"RR {event['mean_relative_rate_percent']:.3f}% | "
+                f"RLF-time {event['rlf_time_percent']:.3f}% | "
+                f"HOF {event['handover_failure_percent']:.3f}% | "
+                f"PP {event['ping_pong_percent']:.3f}% | "
+                f"HO {100 * event['handover_fraction']:.1f}% | "
+                f"STAY {100 * event['stay_fraction']:.1f}%",
+                flush=True,
+            )
         elif event_name == "training_complete":
             print(
                 f"[train] completed {event['total_macro_steps']} "
@@ -807,12 +834,27 @@ def main(root_path: str, args: Namespace) -> int:
         seed=args.split_seed,
     )
     protocol_config = load_protocol_config(data_dir)
+    if args.a3_offset_db is not None:
+        protocol_config = replace(
+            protocol_config,
+            a3_off=float(args.a3_offset_db),
+        )
+    reference_protocol_config = protocol_config
+    if args.reference_a3_offset_db is not None:
+        reference_protocol_config = replace(
+            protocol_config,
+            a3_off=float(args.reference_a3_offset_db),
+        )
     if any(not group for group in (splits.train, splits.validation, splits.test)):
         raise ValueError("Train, validation and test must each contain trajectories; provide more routes or adjust split fractions.")
     if args.value_scale_calibration_routes_per_speed <= 0:
         raise ValueError(
             "--value-scale-calibration-routes-per-speed must be positive."
         )
+    if len(set(args.stochastic_validation_seeds)) != len(
+        args.stochastic_validation_seeds
+    ):
+        raise ValueError("--stochastic-validation-seeds must be unique.")
     if args.value_normalization == "none" and args.value_target_scale is not None:
         raise ValueError(
             "--value-target-scale requires --value-normalization fixed_scale_v1."
@@ -890,6 +932,7 @@ def main(root_path: str, args: Namespace) -> int:
                 candidate_count=args.candidate_count,
                 candidate_order=args.candidate_order,
                 observation_schema=args.observation_schema,
+                decision_trigger=args.decision_trigger,
                 reward_schema=args.reward_schema,
                 reward_config=reward_config,
                 stay_mode=args.stay_mode,
@@ -929,6 +972,7 @@ def main(root_path: str, args: Namespace) -> int:
         candidate_count=args.candidate_count,
         candidate_order=args.candidate_order,
         observation_schema=args.observation_schema,
+        decision_trigger=args.decision_trigger,
         reward_schema=args.reward_schema,
         reward_config=reward_config,
         stay_mode=args.stay_mode,
@@ -942,6 +986,7 @@ def main(root_path: str, args: Namespace) -> int:
         candidate_count=args.candidate_count,
         candidate_order=args.candidate_order,
         observation_schema=args.observation_schema,
+        decision_trigger=args.decision_trigger,
         reward_schema=args.reward_schema,
         reward_config=reward_config,
         stay_mode=args.stay_mode,
@@ -991,6 +1036,7 @@ def main(root_path: str, args: Namespace) -> int:
         agent=agent,
         ppo_config=ppo_config,
         protocol_config=protocol_config,
+        reference_protocol_config=reference_protocol_config,
         manifest_paths=manifest_paths,
         manifest=manifest,
         source_state=source_state,
@@ -999,7 +1045,7 @@ def main(root_path: str, args: Namespace) -> int:
     )
     print("Building validation 3GPP Always-HO QoS reference...", flush=True)
     validation_reference = build_3gpp_validation_reference(
-        protocol_config,
+        reference_protocol_config,
         data_dir,
         splits.validation,
         gamma_per_second=ppo_config.gamma_per_second,
@@ -1024,6 +1070,7 @@ def main(root_path: str, args: Namespace) -> int:
         )
     audit_metadata = {
         "protocol_config": asdict(protocol_config),
+        "reference_protocol_config": asdict(reference_protocol_config),
         "objective": train_env.objective_spec,
         "dataset_manifest_file": os.path.basename(manifest_paths["json"]),
         "dataset_manifest_sha256": manifest_paths["sha256"],
@@ -1124,6 +1171,9 @@ def main(root_path: str, args: Namespace) -> int:
         evaluation_interval=args.evaluation_interval,
         checkpoint_extra=audit_metadata,
         checkpoint_manager=checkpoint_manager,
+        stochastic_validation_seeds=tuple(
+            args.stochastic_validation_seeds
+        ),
         progress_callback=progress_logger,
         progress_interval=args.progress_interval,
     )
@@ -1164,6 +1214,20 @@ def main(root_path: str, args: Namespace) -> int:
     validation_env.load_reward_state(selected_reward_state)
     print("Running final validation evaluation...", flush=True)
     validation_metrics = selected_agent.evaluate(validation_env)
+    selected_stochastic_validation = []
+    if args.stochastic_validation_seeds:
+        validation_env.load_reward_state(selected_reward_state)
+        print(
+            "Running final stochastic validation for seeds: "
+            + ", ".join(str(seed) for seed in args.stochastic_validation_seeds),
+            flush=True,
+        )
+        selected_stochastic_validation = (
+            selected_agent.evaluate_stochastic_seeds(
+                validation_env,
+                tuple(args.stochastic_validation_seeds),
+            )
+        )
     test_metrics = None
     if not args.skip_final_test:
         test_env = HandoverSMDPEnv(
@@ -1174,6 +1238,7 @@ def main(root_path: str, args: Namespace) -> int:
             candidate_count=args.candidate_count,
             candidate_order=args.candidate_order,
             observation_schema=args.observation_schema,
+            decision_trigger=args.decision_trigger,
             reward_schema=args.reward_schema,
             reward_config=reward_config,
             stay_mode=args.stay_mode,
@@ -1198,6 +1263,7 @@ def main(root_path: str, args: Namespace) -> int:
             "checkpoint_selection_summary": checkpoint_summary,
             "experiment_status": experiment_status,
             "validation": asdict(validation_metrics),
+            "stochastic_validation": selected_stochastic_validation,
             "test": (
                 asdict(test_metrics) if test_metrics is not None else None
             ),
@@ -1213,6 +1279,7 @@ def main(root_path: str, args: Namespace) -> int:
         "dataset_manifest": manifest_paths,
         "ppo_config": asdict(ppo_config),
         "protocol_config": asdict(protocol_config),
+        "reference_protocol_config": asdict(reference_protocol_config),
         "objective": train_env.objective_spec,
         "training_reward_state": training_reward_state,
         "selected_reward_state": selected_reward_state,
@@ -1229,6 +1296,7 @@ def main(root_path: str, args: Namespace) -> int:
         "checkpoint_selection": checkpoint_summary,
         "selection_reason": selection_reason,
         "validation": asdict(validation_metrics),
+        "stochastic_validation": selected_stochastic_validation,
         "test": asdict(test_metrics) if test_metrics is not None else None,
         "test_evaluated": test_metrics is not None,
         "checkpoints": {

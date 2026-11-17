@@ -14,13 +14,14 @@ from .observation import A3ObservationBuilder, A3ObservationConfig
 
 
 _MAX_CANDIDATES = 10
-_SUPPORTED_CANDIDATE_COUNTS = (3, 5, 10)
+_SUPPORTED_CANDIDATE_COUNTS = (1, 3, 5, 10)
 _SUPPORTED_CANDIDATE_ORDERS = ("legacy", "ranked_v1")
 _SUPPORTED_OBSERVATION_SCHEMAS = (
     "legacy_v1",
     "rolling_v1",
     "monotonic_v1",
     "qos_full_v1",
+    "t4d1_compact_v1",
 )
 _ADDITIONAL_FEATURES = (
     "spectral_efficiency",
@@ -69,6 +70,27 @@ _FULL_CANDIDATE_FEATURES = (
     "is_previous_cell",
     "is_same_site_as_serving",
     "is_a3_target",
+)
+_T4D1_FEATURES = (
+    "a3_elapsed_s",
+    "rsrp_delta_db_div_20",
+    "serving_sinr_rate_db_div_30",
+    "target_minus_serving_sinr_div_30",
+    "delta_rsrp_trend_20ms_div_10",
+    "delta_rsrp_trend_100ms_div_10",
+    "delta_rsrp_trend_200ms_div_10",
+    "delta_rsrp_trend_500ms_div_10",
+    "delta_sinr_trend_200ms_div_20",
+    "delta_sinr_trend_500ms_div_20",
+    "delta_rsrp_std_100ms_div_10",
+    "delta_rsrp_std_500ms_div_10",
+    "serving_sinr_min_200ms_div_30",
+    "target_sinr_min_200ms_div_30",
+    "n310_progress",
+    "n311_progress",
+    "t310_active",
+    "t310_progress",
+    "target_is_previous",
 )
 
 
@@ -147,6 +169,15 @@ class TopologyCandidateObservationBuilder(A3ObservationBuilder):
         if observation_schema == "qos_full_v1":
             self._feature_names = self._full_feature_names()
             self._low = self._full_low()
+        elif observation_schema == "t4d1_compact_v1":
+            if candidate_count != 1:
+                raise ValueError("t4d1_compact_v1 requires candidate_count=1.")
+            self._feature_names = _T4D1_FEATURES
+            self._low = np.asarray(
+                [0.0, *([-np.inf] * 9), 0.0, 0.0, -np.inf, -np.inf,
+                 0.0, 0.0, 0.0, 0.0, 0.0],
+                dtype=np.float32,
+            )
         else:
             self._feature_names = A3ObservationBuilder.FEATURE_NAMES + tuple(
                 f"c{slot}_{feature}"
@@ -162,7 +193,14 @@ class TopologyCandidateObservationBuilder(A3ObservationBuilder):
                     ),
                 )
             ).astype(np.float32)
-        self._high = np.ones(len(self._feature_names), dtype=np.float32)
+        self._high = (
+            np.asarray(
+                [np.inf] * 14 + [1.0] * 5,
+                dtype=np.float32,
+            )
+            if observation_schema == "t4d1_compact_v1"
+            else np.ones(len(self._feature_names), dtype=np.float32)
+        )
         self._all_cell_history: deque[_AllCellRecord] = deque(
             maxlen=self.config.history_window_ticks
         )
@@ -178,6 +216,7 @@ class TopologyCandidateObservationBuilder(A3ObservationBuilder):
         self._candidate_tic: int | None = None
         self._cached_observation: np.ndarray | None = None
         self._speed_kmh: float | None = None
+        self._trace: RadioTrace | None = None
 
     def reset(self) -> None:
         super().reset()
@@ -188,9 +227,11 @@ class TopologyCandidateObservationBuilder(A3ObservationBuilder):
         self._candidate_tic = None
         self._cached_observation = None
         self._speed_kmh = None
+        self._trace = None
 
     def start_episode(self, trace: RadioTrace) -> None:
         self._speed_kmh = trace.speed_kmh
+        self._trace = trace
         if self.observation_schema == "qos_full_v1" and self._speed_kmh is None:
             raise ValueError(
                 "qos_full_v1 requires speed_kmh in RadioTrace metadata."
@@ -264,7 +305,9 @@ class TopologyCandidateObservationBuilder(A3ObservationBuilder):
             : self.candidate_count
         ]
 
-        if self.observation_schema == "legacy_v1":
+        if self.observation_schema == "t4d1_compact_v1":
+            values = list(self._t4d1_features(snapshot))
+        elif self.observation_schema == "legacy_v1":
             base = super().build(snapshot)
             history = [
                 record
@@ -309,6 +352,56 @@ class TopologyCandidateObservationBuilder(A3ObservationBuilder):
         self._candidate_tic = snapshot.tic
         self._cached_observation = observation.copy()
         return observation
+
+    def _t4d1_features(self, snapshot: ProtocolSnapshot) -> tuple[float, ...]:
+        """Return the frozen compact causal feature set used by T4D.1."""
+        decision = snapshot.decision_point
+        trace = self._trace
+        if decision is None or trace is None:
+            raise RuntimeError("T4D.1 features require an active decision and trace.")
+        tic = int(snapshot.tic)
+        serving = int(decision.serving_cell)
+        target = int(decision.target_cell)
+        dt_ms = int(self.protocol_config.delta_t_ms)
+        rsrp_s = trace.rsrp_a3_db[serving]
+        rsrp_t = trace.rsrp_a3_db[target]
+        sinr_s = trace.sinr_rate_db[serving]
+        sinr_t = trace.sinr_rate_db[target]
+        delta_rsrp = rsrp_t - rsrp_s
+        delta_sinr = sinr_t - sinr_s
+
+        def start_for(milliseconds: int) -> int:
+            return max(0, tic - max(1, milliseconds // dt_ms))
+
+        def trend(values: np.ndarray, milliseconds: int) -> float:
+            return float(values[tic] - values[start_for(milliseconds)])
+
+        # T4A/T4B define the nominal 100 ms standard-deviation window as
+        # the current sample plus the previous nine samples.
+        start_100 = max(0, tic - 9)
+        start_200 = start_for(200)
+        start_500 = start_for(500)
+        return (
+            max(0, tic - int(decision.a3_start_tic)) * dt_ms / 1000.0,
+            float(delta_rsrp[tic]) / 20.0,
+            float(sinr_s[tic]) / 30.0,
+            float(delta_sinr[tic]) / 30.0,
+            trend(delta_rsrp, 20) / 10.0,
+            trend(delta_rsrp, 100) / 10.0,
+            trend(delta_rsrp, 200) / 10.0,
+            trend(delta_rsrp, 500) / 10.0,
+            trend(delta_sinr, 200) / 20.0,
+            trend(delta_sinr, 500) / 20.0,
+            float(np.std(delta_rsrp[start_100 : tic + 1])) / 10.0,
+            float(np.std(delta_rsrp[start_500 : tic + 1])) / 10.0,
+            float(np.min(sinr_s[start_200 : tic + 1])) / 30.0,
+            float(np.min(sinr_t[start_200 : tic + 1])) / 30.0,
+            float(snapshot.n310_progress),
+            float(snapshot.n311_progress),
+            float(snapshot.t310_active),
+            float(snapshot.t310_progress),
+            float(snapshot.previous_cell == target),
+        )
 
     def action_mask(self) -> np.ndarray:
         """Return STAY plus one validity bit for each frozen candidate."""
